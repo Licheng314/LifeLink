@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://life-radio.local/contracts/enrollment-claim-v1.schema.json",
+  "title": "Life Link enrollment claim v1",
+  "description": "Claim request body. The matching invitation_token is carried only in the Authorization Bearer header.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "invitation_id",
+    "device"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "life-radio-enrollment-claim-v1"
+    },
+    "invitation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "device": {
+      "$ref": "#/$defs/enrollment_device"
+    }
+  },
+  "$defs": {
+    "enrollment_device": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/desktop_device"
+        },
+        {
+          "$ref": "#/$defs/android_device"
+        }
+      ]
+    },
+    "desktop_device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_id",
+        "platform",
+        "display_name"
+      ],
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "pattern": "^desktop-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "platform": {
+          "const": "desktop"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      }
+    },
+    "android_device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_id",
+        "platform",
+        "display_name"
+      ],
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "pattern": "^android-install-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "platform": {
+          "const": "android"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      }
+    }
+  }
+}

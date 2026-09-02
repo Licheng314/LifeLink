@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://life-radio.local/contracts/one-line-invitation-payload-v1.schema.json",
+  "title": "Life Link one-line invitation payload v1",
+  "description": "The compact JSON payload encoded as unpadded base64url after the LR1. prefix. This object contains a short-lived secret.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "invitation_id",
+    "central_base_url",
+    "invitation_token",
+    "scope",
+    "expires_at"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "invitation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "central_base_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://[^\\s?#]+(?:/[^\\s?#]*)?$",
+      "description": "Absolute HTTPS base URL. Query strings and fragments are forbidden."
+    },
+    "invitation_token": {
+      "type": "string",
+      "minLength": 32,
+      "pattern": "^\\S+$",
+      "description": "A high-entropy, short-lived, single-use bearer secret."
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "upload",
+        "dashboard"
+      ]
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "UTC expiry. Invitation creation defaults to 24 hours from issuance."
+    }
+  }
+}

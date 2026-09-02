@@ -1,0 +1,190 @@
+{
+  "schema_version": "v1",
+  "batch_id": "b567d5ac-f939-4f38-8534-d33dfb02be54",
+  "device": {
+    "device_id": "android-install-4eacef64",
+    "platform": "android",
+    "display_name": "Life Link Android"
+  },
+  "sent_at": "2026-07-18T04:00:10Z",
+  "events": [
+    {
+      "event_id": "0d83ab2a-9fc4-462f-a0e1-d8873f022496",
+      "occurred_at": "2026-07-18T03:45:00Z",
+      "event_type": "app.foreground",
+      "source": {
+        "kind": "android",
+        "collector": "usage_stats",
+        "reliability": "observed"
+      },
+      "duration_seconds": 300,
+      "payload": {
+        "app": {
+          "package_name": "com.example.reader",
+          "display_name": "Reader",
+          "activity_name": "com.example.reader.MainActivity"
+        }
+      }
+    },
+    {
+      "event_id": "2d58cc06-3a7e-4650-8109-2e6ba06d1db5",
+      "occurred_at": "2026-07-18T01:00:00Z",
+      "event_type": "location.stay",
+      "source": {
+        "kind": "android",
+        "collector": "fused_location",
+        "reliability": "observed"
+      },
+      "duration_seconds": 1800,
+      "payload": {
+        "kind": "stay",
+        "latitude": 31.23043,
+        "longitude": 121.47371,
+        "coordinate_precision_digits": 5,
+        "accuracy_m": 42.0,
+        "speed_mps": 0.0,
+        "provider": "fused",
+        "is_mock": false,
+        "observed_until": "2026-07-18T01:30:00Z",
+        "is_active": false,
+        "place": {
+          "country": "China",
+          "admin_area": "Shanghai",
+          "city": "Shanghai",
+          "district": "Huangpu District",
+          "road_or_poi": "East Nanjing Road",
+          "display_label": "Shanghai · Huangpu District · East Nanjing Road",
+          "full_address": "East Nanjing Road, Huangpu District, Shanghai, China",
+          "geocode_precision": "address",
+          "resolved_at": "2026-07-18T01:00:05Z",
+          "geocode_source": "android_geocoder"
+        },
+        "frequent_place": {
+          "id": "db15454d-48d3-49ad-8cff-d4a239d39370",
+          "label": "Frequent place 1",
+          "visit_count": 4,
+          "total_stay_seconds": 28800
+        }
+      }
+    },
+    {
+      "event_id": "6b31b2fe-08de-44cc-99b0-52ecb1a3a3b7",
+      "occurred_at": "2026-07-18T04:00:00Z",
+      "event_type": "location.sample",
+      "source": {
+        "kind": "android",
+        "collector": "fused_location",
+        "reliability": "observed"
+      },
+      "duration_seconds": 300,
+      "payload": {
+        "kind": "sample",
+        "latitude": 31.23043,
+        "longitude": 121.47371,
+        "coordinate_precision_digits": 5,
+        "accuracy_m": 38.0,
+        "observed_until": "2026-07-18T04:05:00Z",
+        "is_active": true,
+        "latest_observed_at": "2026-07-18T04:05:00Z",
+        "current_latitude": 31.23110,
+        "current_longitude": 121.47435,
+        "current_accuracy_m": 35.0
+      }
+    },
+    {
+      "event_id": "0e0e8842-7606-45df-a4cc-230698bf5605",
+      "occurred_at": "2026-07-18T04:09:59Z",
+      "event_type": "location.observation",
+      "source": {
+        "kind": "android",
+        "collector": "fused_location",
+        "reliability": "observed"
+      },
+      "duration_seconds": 0,
+      "payload": {
+        "kind": "observation",
+        "latitude": 31.23142,
+        "longitude": 121.47462,
+        "coordinate_precision_digits": 5,
+        "accuracy_m": 32.0,
+        "speed_mps": 0.4,
+        "provider": "fused",
+        "is_mock": false,
+        "observed_at": "2026-07-18T04:10:00Z",
+        "location_time": "2026-07-18T04:09:59Z",
+        "place": {
+          "country": "China",
+          "admin_area": "Shanghai",
+          "city": "Shanghai",
+          "district": "Huangpu District",
+          "road_or_poi": "East Nanjing Road",
+          "display_label": "Shanghai · Huangpu District · East Nanjing Road",
+          "full_address": "East Nanjing Road, Huangpu District, Shanghai, China",
+          "geocode_precision": "address",
+          "resolved_at": "2026-07-18T04:10:02Z",
+          "geocode_source": "android_geocoder"
+        },
+        "motion_window": {
+          "started_at": "2026-07-18T04:05:00Z",
+          "ended_at": "2026-07-18T04:10:00Z",
+          "accelerometer_available": true,
+          "sensor_sample_count": 1482,
+          "motion_triggered": true,
+          "trigger_count": 6,
+          "threshold_mps2": 0.7,
+          "peak_delta_mps2": 2.31
+        }
+      }
+    },
+    {
+      "event_id": "1f1af0d0-0000-4ee1-8000-000000000001",
+      "occurred_at": "2026-07-18T04:15:00Z",
+      "event_type": "app.foreground",
+      "source": {
+        "kind": "desktop",
+        "collector": "windows_native",
+        "reliability": "observed"
+      },
+      "duration_seconds": 120,
+      "payload": {
+        "app": {
+          "display_name": "Sample Editor",
+          "process_name": "sample-editor.exe"
+        }
+      }
+    },
+    {
+      "event_id": "1f1af0d0-0000-4ee1-8000-000000000002",
+      "occurred_at": "2026-07-18T04:17:00Z",
+      "event_type": "device.input_state",
+      "source": {
+        "kind": "desktop",
+        "collector": "windows_native",
+        "reliability": "observed"
+      },
+      "duration_seconds": 60,
+      "payload": {
+        "status": "afk",
+        "idle_threshold_seconds": 300
+      }
+    },
+    {
+      "event_id": "1f1af0d0-0000-4ee1-8000-000000000003",
+      "occurred_at": "2026-07-18T04:18:00Z",
+      "event_type": "web.foreground",
+      "source": {
+        "kind": "web",
+        "collector": "browser_extension",
+        "reliability": "observed"
+      },
+      "duration_seconds": 60,
+      "payload": {
+        "domain": "example.test",
+        "browser_app": {
+          "display_name": "Sample Browser",
+          "process_name": "sample-browser.exe"
+        }
+      }
+    }
+  ]
+}

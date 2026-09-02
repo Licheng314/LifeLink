@@ -1,0 +1,36 @@
+{
+  "schema_version": "v1",
+  "batch_id": "371d4e37-77a7-42df-b21f-55ddffbfb527",
+  "device": {
+    "device_id": "desktop-b76c5155-47e8-4c39-9bd4-2d23388cd35f",
+    "platform": "desktop",
+    "display_name": "联想小A"
+  },
+  "sent_at": "2026-07-30T14:20:10Z",
+  "events": [
+    {
+      "event_id": "50906590-cf23-4ac3-bb74-93db5e19ec12",
+      "occurred_at": "2026-07-30T14:10:00Z",
+      "event_type": "app.foreground",
+      "source": {
+        "kind": "desktop",
+        "collector": "activitywatch",
+        "reliability": "observed"
+      },
+      "duration_seconds": 610,
+      "revision": 3,
+      "payload": {
+        "app": {
+          "package_name": "chrome.exe",
+          "display_name": "Google Chrome",
+          "activity_name": "哔哩哔哩"
+        },
+        "activitywatch": {
+          "kind": "window",
+          "bucket_id": "aw-watcher-window_desktop",
+          "event_id": 1842
+        }
+      }
+    }
+  ]
+}

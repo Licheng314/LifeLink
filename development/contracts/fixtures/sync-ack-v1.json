@@ -1,0 +1,36 @@
+{
+  "batch_id": "b567d5ac-f939-4f38-8534-d33dfb02be54",
+  "accepted_event_ids": [
+    "0d83ab2a-9fc4-462f-a0e1-d8873f022496",
+    "2d58cc06-3a7e-4650-8109-2e6ba06d1db5",
+    "6b31b2fe-08de-44cc-99b0-52ecb1a3a3b7",
+    "0e0e8842-7606-45df-a4cc-230698bf5605"
+  ],
+  "confirmed_event_ids": [
+    "0d83ab2a-9fc4-462f-a0e1-d8873f022496",
+    "2d58cc06-3a7e-4650-8109-2e6ba06d1db5",
+    "6b31b2fe-08de-44cc-99b0-52ecb1a3a3b7",
+    "0e0e8842-7606-45df-a4cc-230698bf5605"
+  ],
+  "duplicate_event_ids": [],
+  "event_results": [
+    {
+      "event_id": "0d83ab2a-9fc4-462f-a0e1-d8873f022496",
+      "status": "stored"
+    },
+    {
+      "event_id": "2d58cc06-3a7e-4650-8109-2e6ba06d1db5",
+      "status": "stored"
+    },
+    {
+      "event_id": "6b31b2fe-08de-44cc-99b0-52ecb1a3a3b7",
+      "status": "stored"
+    },
+    {
+      "event_id": "0e0e8842-7606-45df-a4cc-230698bf5605",
+      "status": "stored"
+    }
+  ],
+  "rejected_events": [],
+  "received_at": "2026-07-18T04:00:11Z"
+}

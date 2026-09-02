@@ -1,0 +1,9 @@
+{
+  "schema_version": "life-radio-enrollment-claim-v1",
+  "invitation_id": "33333333-3333-4333-8333-333333333333",
+  "device": {
+    "device_id": "android-install-11111111-2222-4333-8444-555555555555",
+    "platform": "android",
+    "display_name": "Life Link Android"
+  }
+}

@@ -1,0 +1,6 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Windows Command Prompt parses UTF-8/LF batch files unreliably.
+*.bat text eol=crlf
+*.cmd text eol=crlf

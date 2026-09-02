@@ -1,0 +1,5 @@
+﻿# Bilibili Audio - portable dependencies and downloaded working files are intentionally ignored.
+/bin/
+/downloads/
+*.pyc
+/__pycache__/

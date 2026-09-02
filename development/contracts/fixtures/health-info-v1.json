@@ -1,0 +1,63 @@
+{
+  "steps_observation": {
+    "event_id": "8a58e540-9f2b-4e53-bdb0-f22bf1c4e1e4",
+    "occurred_at": "2026-08-12T08:00:00Z",
+    "event_type": "health.steps_observation",
+    "source": {
+      "kind": "android",
+      "collector": "step_counter",
+      "reliability": "observed"
+    },
+    "payload": {
+      "counter_value": 123456,
+      "counter_session_id": "4d7acb63-bbed-41a9-aaeb-00fcb6f35a38",
+      "sensor_type": "android.step_counter"
+    }
+  },
+  "health_info_response": {
+    "date": "2026-08-12",
+    "timezone": "Asia/Shanghai",
+    "sleep": {
+      "status": "final",
+      "window_start": "2026-08-11T13:00:00Z",
+      "window_end": "2026-08-12T04:00:00Z",
+      "estimated_start": "2026-08-11T15:05:00Z",
+      "estimated_end": "2026-08-11T22:20:00Z",
+      "finalized_at": "2026-08-11T22:20:00Z",
+      "interval_seconds": 26100,
+      "rest_seconds": 24900,
+      "interruption_seconds": 1200,
+      "last_activity_at": "2026-08-11T15:05:00Z",
+      "first_activity_at": "2026-08-11T22:20:00Z",
+      "last_activity_devices": [
+        {"device_id": "desktop-example", "display_name": "书房电脑", "platform": "desktop"}
+      ],
+      "first_activity_devices": [
+        {"device_id": "android-install-example", "display_name": "手机", "platform": "android"}
+      ],
+      "last_activity_apps": [
+        {"device_id": "desktop-example", "device_display_name": "书房电脑", "platform": "desktop", "app_name": "Obsidian.exe"}
+      ],
+      "first_activity_apps": [
+        {"device_id": "android-install-example", "device_display_name": "手机", "platform": "android", "app_name": "时钟"}
+      ],
+      "contributing_device_ids": ["desktop-example", "android-install-example"],
+      "warnings": []
+    },
+    "steps": {
+      "devices": [
+        {
+          "device_id": "android-install-example",
+          "display_name": "手机",
+          "status": "available",
+          "steps": 6421,
+          "hourly_steps": [0, 0, 0, 0, 0, 0, 0, 321, 1100, 800, 500, 300, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1200, 2200, 0],
+          "sample_count": 18,
+          "first_sample_at": "2026-08-11T16:04:00Z",
+          "last_sample_at": "2026-08-12T15:55:00Z",
+          "warnings": []
+        }
+      ]
+    }
+  }
+}

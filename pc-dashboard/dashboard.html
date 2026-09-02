@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Life Link · 个人数据仪表盘</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<link rel="stylesheet" href="/assets/styles/base.css?v=20260829-6">
+<link rel="stylesheet" href="/assets/styles/components.css?v=20260829-1">
+<link rel="stylesheet" href="/assets/styles/wishes-events.css?v=20260831-2">
+<link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-brand">
+      <img class="sidebar-brand-logo" src="/assets/images/life-link-logo.png?v=20260902-1" alt="">
+      <div class="sidebar-brand-copy">
+        <div class="sidebar-title-row"><h1>Life Link</h1><span class="historical-data-badge" data-history-badge hidden>历史数据</span></div>
+        <div class="subtitle">连接你的设备、数据与 AI</div>
+      </div>
+    </div>
+    <section class="business-calendar" aria-label="业务日周历">
+      <div class="business-calendar-head">
+        <button type="button" class="calendar-week-button" id="calendar-prev-week" aria-label="上一周">‹</button>
+        <div class="calendar-month"><strong id="calendar-week-label">业务日</strong><button type="button" id="calendar-return-today" hidden>返回</button></div>
+        <button type="button" class="calendar-week-button" id="calendar-next-week" aria-label="下一周">›</button>
+      </div>
+      <div class="business-calendar-weekdays" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+      <div id="business-calendar-days" class="business-calendar-days"><span class="calendar-loading">加载中…</span></div>
+    </section>
+  </div>
+  <div class="sidebar-nav">
+    <div class="nav-item active" data-page="timeline-events">
+      <span class="icon"><i data-lucide="list"></i></span><span>事件时间线</span>
+    </div>
+    <div class="nav-item" data-page="app-usage">
+      <span class="icon"><i data-lucide="monitor"></i></span><span>应用使用</span>
+    </div>
+    <div class="nav-item" data-page="location">
+      <span class="icon"><i data-lucide="map-pin"></i></span><span>位置轨迹</span>
+    </div>
+    <div class="nav-item" data-page="health-info">
+      <span class="icon"><i data-lucide="heart-pulse"></i></span><span>健康信息</span>
+    </div>
+    <div class="sidebar-nav-bottom">
+      <div class="nav-item" data-page="sync">
+        <span class="icon"><i data-lucide="cpu"></i></span><span>设备管理</span>
+      </div>
+    </div>
+  </div>
+  <div class="sidebar-data-size"><span id="calendar-day-size" class="calendar-day-size">当日数据量：--</span></div>
+  <div class="sidebar-footer">
+    <span class="server-label">服务器连接：</span><span class="device-status" id="sidebar-server-status"><span id="sidebar-server-text">连接中…</span></span>
+  </div>
+</nav>
+
+<!-- Main Content -->
+<div class="main">
+
+  <!-- ============ 事件时间线 ============ -->
+  <div class="page active" id="page-timeline-events">
+    <div class="page-header">
+      <div><h2><i data-lucide="list"></i> 事件时间线</h2><div class="desc">心愿与事件记录</div></div>
+      <div class="timeline-header-meta"><div class="desc" id="events-date-label">加载中...</div><time id="local-clock" class="local-clock" aria-label="实时本地时间">--:--:--</time></div>
+    </div>
+
+    <div class="timeline-top-grid">
+      <section class="chart-panel ai-reader-panel"><div id="ai-reader-container"></div></section>
+    </div>
+    <div class="timeline-secondary-strip">
+      <div id="today-device-connections" class="today-device-connections"><span class="event-muted">加载中...</span></div>
+    </div>
+
+    <!-- 心愿卡片区域 -->
+    <div class="chart-panel" id="wish-cards-panel" style="display:none">
+      <div class="wish-panel-heading"><h3 id="wish-cards-title"><i data-lucide="target"></i> 当前心愿 <span id="wish-count-label">(0/3)</span></h3><button type="button" id="wish-history-open" class="wish-history-open">往期心愿</button></div>
+      <div id="wish-cards-container"></div>
+      <div id="wish-add-row" style="text-align:center;padding:12px 0">
+        <button id="wish-add-btn" style="width:100%;padding:10px;border:2px dashed var(--border);border-radius:8px;background:var(--bg);color:var(--text-secondary);cursor:pointer;font-size:24px">+</button>
+      </div>
+    </div>
+
+    <!-- 错误横幅 -->
+    <div id="events-error-banner" style="display:none;padding:12px 20px;margin:8px 0;border-radius:8px;background:#fff3cd;color:#856404;border:1px solid #ffc107"></div>
+
+    <!-- 当前离线中横幅 -->
+    <div id="events-stale-banner" style="display:none;padding:12px 20px;margin:8px 0;border-radius:8px;background:#f8d7da;color:#721c24;border:1px solid #f5c6cb">
+      <i data-lucide="cloud-off" style="width:14px;height:14px;vertical-align:-2px"></i> 当前离线中 · 显示已缓存数据 · 创建与评估暂不可用
+    </div>
+
+    <!-- 业务日时间轴 -->
+    <div class="chart-panel">
+      <h3><i data-lucide="clock"></i> 业务日时间轴</h3>
+      <div id="bizday-timeline-wrap">
+        <div id="bizday-timeline" class="bizday-timeline">
+          <div class="bizday-tl-axis"></div>
+          <div id="bizday-tl-now" class="bizday-tl-now" style="display:none"><span class="now-label">现在</span><span class="now-time">--:--</span></div>
+        </div>
+        <div id="bizday-tl-tooltip" class="activity-chart-tooltip" hidden></div>
+      </div>
+    </div>
+
+    <!-- 事件时间线 -->
+    <div class="chart-panel">
+      <div class="event-timeline-heading">
+        <h3><i data-lucide="scroll-text"></i> 今日时间线</h3>
+        <div class="event-timeline-actions">
+          <button type="button" id="event-filter-normal" class="event-filter-btn" title="显示/隐藏普通事件" onclick="toggleEventFilter('normal')"><i data-lucide="zap"></i></button>
+          <button type="button" id="event-filter-system" class="event-filter-btn" title="显示/隐藏系统事件" onclick="toggleEventFilter('system')"><i data-lucide="settings"></i></button>
+          <button type="button" id="ai-progress-clear-top" hidden>清理访问标记</button>
+          <span class="event-content-actions"><button type="button" id="event-settings-open">报告设置</button><button type="button" id="ai-context-preview">查看发送原文</button></span>
+        </div>
+      </div>
+      <div id="event-settings-container"></div>
+      <div id="events-timeline-container">
+        <div class="loading" id="events-timeline-loading">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 应用使用 ============ -->
+  <div class="page" id="page-app-usage">
+    <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:20px">
+      <div><h2><i data-lucide="monitor"></i> 应用使用</h2><div class="desc">不同设备的应用用量时间统计，以及黑名单管理</div></div>
+      <button id="app-ai-btn" class="report-body-btn" style="display:none" onclick="showAppAIContext()">AI 上下文摘要</button>
+    </div>
+
+    <div id="usage-collection-warning" class="health-banner error" style="display:none"></div>
+
+    <div class="cards-row" id="usage-device-cards" style="margin-bottom:16px"></div>
+    <div class="usage-divider" style="height:1px;background:#EDE6D8;margin:0 0 20px 0"></div>
+
+    <!-- Stat cards -->
+    <div class="cards-row">
+      <div class="stat-card danger">
+        <div class="label">今日黑名单累计</div>
+        <div class="value" id="stat-today-total">--<span style="font-size:16px"> 分钟</span></div>
+        <div class="sub" id="stat-today-sub">加载中...</div>
+      </div>
+      <div class="stat-card warning">
+        <div class="label">过去1小时黑名单</div>
+        <div class="value" id="stat-last-hour">--<span style="font-size:16px"> 分钟</span></div>
+        <div class="sub" id="stat-last-hour-sub">加载中...</div>
+      </div>
+      <div class="stat-card success">
+        <div class="label">当前状态</div>
+        <div class="value" id="stat-current-status">--</div>
+        <div class="sub" id="stat-current-sub">加载中...</div>
+      </div>
+      <div class="stat-card info">
+        <div class="label">设备活跃</div>
+        <div class="value" id="stat-afk-status">--</div>
+        <div class="sub" id="stat-afk-sub">加载中...</div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="chart-panel">
+      <h3><i data-lucide="bar-chart-3"></i> 每小时应用使用趋势</h3>
+      <div class="chart-wrap"><div class="chart-loading" id="hourly-loading">加载中...</div><canvas id="chartBlacklistHourly" style="display:none"></canvas></div>
+    </div>
+
+    <div class="two-col usage-rank-pair">
+      <div class="chart-panel" id="app-usage-panel">
+        <h3><i data-lucide="smartphone"></i> 全应用使用时长排行 (Top 10)</h3>
+        <div class="chart-wrap" style="max-height:400px"><div class="chart-loading" id="apps-loading">加载中...</div><canvas id="chartAppBreakdown" style="display:none"></canvas></div>
+      </div>
+      <div class="chart-panel" id="site-usage-panel">
+        <h3><i data-lucide="globe"></i> 网站访问使用时长</h3>
+        <div class="chart-wrap" style="max-height:400px"><canvas id="chartSiteBreakdown"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Blacklist management panel -->
+    <div class="chart-panel bl-panel" id="bl-management-panel" style="display:none">
+      <h3><i data-lucide="shield-alert"></i> 黑名单管理</h3>
+      <div id="bl-management-list"></div>
+    </div>
+
+  </div>
+
+  <!-- ============ 位置轨迹 ============ -->
+  <div class="page" id="page-location">
+  </div>
+
+  <!-- ============ 健康信息 ============ -->
+  <div class="page" id="page-health-info">
+    <div class="page-header">
+      <h2><i data-lucide="heart-pulse"></i> 健康信息</h2>
+      <div class="desc">估算值，仅供参考 · 数据由中央服务统一计算</div>
+    </div>
+    <div id="health-stale-banner" class="health-banner" hidden><i data-lucide="cloud-off" style="width:14px;height:14px;vertical-align:-2px"></i> 当前离线中 · 显示最近一次缓存的健康信息</div>
+    <div id="health-error-banner" class="health-banner error" hidden></div>
+    <div class="health-grid">
+      <section class="chart-panel"><h3><i data-lucide="moon"></i> 昨晚休息参考</h3><div id="health-sleep-card" class="health-content">加载中...</div></section>
+      <section class="chart-panel"><h3><i data-lucide="footprints"></i> 今日步数</h3><div id="health-steps-card" class="health-content">加载中...</div></section>
+    </div>
+    <section class="chart-panel"><h3><i data-lucide="calendar-days"></i> 本周休息参考</h3><div id="health-sleep-week" class="health-week">加载中...</div></section>
+    <section class="chart-panel"><h3><i data-lucide="calendar-days"></i> 本周步数</h3><div id="health-steps-week" class="health-week">加载中...</div></section>
+  </div>
+
+  <!-- ============ 小工具 ============ -->
+  <!-- 暂时隐藏：后端媒体能力与源码保留，后续启用时移除 hidden。 -->
+  <div class="page" id="page-tools" hidden>
+    <div class="page-header">
+      <h2><i data-lucide="wrench"></i> 小工具</h2>
+      <div class="desc">服务端工具集 · 在中央主机上执行</div>
+    </div>
+
+    <div class="tools-card">
+      <h3><i data-lucide="music"></i> B 站音乐提取</h3>
+      <div class="tools-row">
+        <input id="bili-url" class="tools-input" type="text" placeholder="粘贴 B 站视频链接，例如 https://www.bilibili.com/video/BV... 或 https://b23.tv/..." />
+        <button id="bili-extract" class="tools-btn">提取音乐</button>
+        <button id="bili-open-folder" class="tools-btn secondary">打开文件夹</button>
+      </div>
+      <div id="bili-status" class="tools-status"></div>
+      <div id="bili-jobs" class="tools-jobs"></div>
+      <div class="tools-hint">同时只处理一个任务，其余请等待。MP3 保存到中央服务的 media/audio 目录。</div>
+    </div>
+
+    <div class="tools-card">
+      <h3>🎶 已存储音乐</h3>
+      <table class="data-table">
+        <thead>
+          <tr><th>文件名</th><th style="width:120px">大小</th><th style="width:180px">修改时间</th></tr>
+        </thead>
+        <tbody id="bili-files"><tr><td colspan="3" style="color:var(--text-secondary)">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ============ 设备管理 ============ -->
+  <div class="page" id="page-sync">
+    <div class="page-header">
+      <h2><i data-lucide="cpu"></i> 设备管理</h2>
+      <div class="desc">查看当前设备、设置中央自定义名称，或删除不再使用的设备。删除不会清除已上传的历史数据。</div>
+    </div>
+
+    <div class="chart-panel device-settings-panel">
+      <h3><i data-lucide="settings"></i> 统计设置</h3>
+      <label class="device-setting-row" for="day-boundary-hour">
+        <span>跨日时间</span>
+        <select id="day-boundary-hour"></select>
+        <span class="device-setting-hint">应用用量和业务日从这个整点开始计算</span>
+      </label>
+      <label class="device-setting-row" for="pc-login-startup">
+        <span>登录后自动启动</span>
+        <input id="pc-login-startup" type="checkbox" />
+        <span class="device-setting-hint" id="pc-login-startup-status">登录 Windows 后静默启动 PC 客户端</span>
+      </label>
+    </div>
+
+    <div class="cards-row" id="sync-device-cards">
+      <div class="stat-card accent">
+        <div class="label">本机</div>
+        <div class="value">检测中...</div>
+        <div class="sub">正在读取同步服务状态</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="/assets/scripts/wishes-events.js?v=20260831-2"></script>
+<script src="/assets/scripts/shared-ui.js?v=20260830-1"></script>
+<script src="/assets/scripts/usage.js?v=20260829-3"></script>
+<script src="/assets/scripts/health-info.js?v=20260829-1"></script>
+<script src="/assets/scripts/devices.js?v=20260902-1"></script>
+<script src="/assets/vendor/leaflet/leaflet.js"></script>
+<script src="/assets/scripts/location.js?v=20260829-4"></script>
+<script src="/assets/scripts/app.js?v=20260829-2"></script>
+</body>
+</html>

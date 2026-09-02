@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://life-radio.local/contracts/ai-reader-pairing-claim-v1.schema.json",
+  "title": "Life Link AI reader pairing claim v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pairing_id",
+    "reader"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "life-radio-ai-reader-pairing-claim-v1"
+    },
+    "pairing_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reader": {
+      "$ref": "#/$defs/reader_identity"
+    }
+  },
+  "$defs": {
+    "reader_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "instance_id",
+        "display_name"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+        },
+        "instance_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "process_identity": {
+          "$ref": "#/$defs/process_identity"
+        },
+        "process_binding": {
+          "$ref": "#/$defs/process_binding"
+        }
+      },
+      "not": {
+        "required": ["process_identity", "process_binding"]
+      }
+    },
+    "process_binding": {
+      "oneOf": [
+        { "$ref": "#/$defs/process_name_binding" },
+        { "$ref": "#/$defs/hosted_argument_binding" }
+      ]
+    },
+    "process_name_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "display_name", "process_name"],
+      "properties": {
+        "strategy": { "const": "process-name" },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "process_name": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}\\.exe$" }
+      }
+    },
+    "hosted_argument_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "display_name", "process_name", "argument_path_segments"],
+      "properties": {
+        "strategy": { "const": "hosted-argument" },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "process_name": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}\\.exe$" },
+        "argument_path_segments": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_.@+-]{1,128}$" }
+        }
+      }
+    },
+    "process_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executable_path", "pid", "started_at"],
+      "properties": {
+        "executable_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "Absolute executable path; central compares it exactly after platform normalization and never stores a command line."
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      }
+    }
+  }
+}

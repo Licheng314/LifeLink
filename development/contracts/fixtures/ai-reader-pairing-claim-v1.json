@@ -1,0 +1,9 @@
+{
+  "schema_version": "life-radio-ai-reader-pairing-claim-v1",
+  "pairing_id": "44444444-4444-4444-8444-444444444444",
+  "reader": {
+    "type": "personal-agent",
+    "instance_id": "reader-fixture-01",
+    "display_name": "Personal AI Reader"
+  }
+}

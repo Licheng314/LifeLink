@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Life Link · 现役系统架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "fact-upload",
+        "label": "事实采集与上传",
+        "focus": ["pc-collector", "pc-outbox", "android-client", "central-service", "central-db"],
+        "note": "PC 与 Android 分别采集本机事实，经过独立凭据上传到中央长期库。"
+      },
+      {
+        "id": "local-dashboard",
+        "label": "本机查看",
+        "focus": ["person", "webui", "pc-proxy", "central-service"],
+        "note": "浏览器只访问本机 WebUI；PC 代理持有设备凭据并读取中央派生视图。"
+      },
+      {
+        "id": "ai-context",
+        "label": "AI 被动读取",
+        "focus": ["central-service", "central-db", "ai-reader"],
+        "note": "已配对 AI 使用独立 Reader 凭据被动读取上下文与增量事件。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "person",
+      "type": "external",
+      "label": "用户",
+      "sublabel": "浏览器与设备使用者",
+      "pos": [40, 285],
+      "size": [150, 68]
+    },
+    {
+      "id": "webui",
+      "type": "frontend",
+      "label": "PC WebUI",
+      "sublabel": "127.0.0.1:8090",
+      "pos": [270, 165],
+      "size": [165, 72],
+      "tag": "本机同源"
+    },
+    {
+      "id": "pc-proxy",
+      "type": "backend",
+      "label": "PC 本地代理",
+      "sublabel": "Dashboard API · 同步服务",
+      "pos": [270, 285],
+      "size": [165, 72]
+    },
+    {
+      "id": "pc-collector",
+      "type": "backend",
+      "label": "PC 原生采集",
+      "sublabel": "前台应用 · 输入空闲",
+      "pos": [270, 405],
+      "size": [165, 72]
+    },
+    {
+      "id": "pc-outbox",
+      "type": "database",
+      "label": "PC Outbox",
+      "sublabel": "本地可靠队列",
+      "pos": [510, 405],
+      "size": [150, 72]
+    },
+    {
+      "id": "android-client",
+      "type": "frontend",
+      "label": "Android 客户端",
+      "sublabel": "应用使用 · 位置 · 步数",
+      "pos": [510, 110],
+      "size": [170, 72]
+    },
+    {
+      "id": "central-service",
+      "type": "backend",
+      "label": "中央服务",
+      "sublabel": "鉴权 · ACK · 查询 · 派生",
+      "pos": [790, 285],
+      "size": [185, 76],
+      "tag": "唯一权威"
+    },
+    {
+      "id": "central-db",
+      "type": "database",
+      "label": "中央 SQLite 长期库",
+      "sublabel": "事实 · 设置 · 时间线 · 心愿",
+      "pos": [1045, 285],
+      "size": [185, 76]
+    },
+    {
+      "id": "ai-reader",
+      "type": "external",
+      "label": "AI 伴侣 / Agent",
+      "sublabel": "MCP Reader · 独立只读身份",
+      "pos": [790, 105],
+      "size": [185, 72]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Windows PC 客户端（本机）",
+      "wraps": ["webui", "pc-proxy", "pc-collector", "pc-outbox"],
+      "pad": 30
+    },
+    {
+      "kind": "region",
+      "label": "中央主机",
+      "wraps": ["central-service", "central-db"],
+      "pad": 34
+    }
+  ],
+  "connections": [
+    {
+      "id": "person-webui",
+      "from": "person",
+      "to": "webui",
+      "label": "本机浏览器访问",
+      "variant": "emphasis"
+    },
+    {
+      "id": "webui-proxy",
+      "from": "webui",
+      "to": "pc-proxy",
+      "label": "同源 /api",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "collector-outbox",
+      "from": "pc-collector",
+      "to": "pc-outbox",
+      "label": "本机落队列"
+    },
+    {
+      "id": "outbox-central",
+      "from": "pc-outbox",
+      "to": "central-service",
+      "label": "HTTPS 上传 · 逐事件 ACK",
+      "variant": "emphasis"
+    },
+    {
+      "id": "android-central",
+      "from": "android-client",
+      "to": "central-service",
+      "label": "HTTPS 上传 · 逐事件 ACK",
+      "variant": "emphasis"
+    },
+    {
+      "id": "proxy-central",
+      "from": "pc-proxy",
+      "to": "central-service",
+      "label": "鉴权读取与管理"
+    },
+    {
+      "id": "central-db-write",
+      "from": "central-service",
+      "to": "central-db",
+      "label": "受控写入与派生",
+      "labelDy": 62
+    },
+    {
+      "id": "ai-central-read",
+      "from": "ai-reader",
+      "to": "central-service",
+      "label": "Reader Token · MCP 被动读取",
+      "variant": "security",
+      "labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "数据边界",
+      "items": [
+        "客户端只采集、缓存并上传本机事实。",
+        "中央服务是身份、长期存储、共享规则与派生结果的唯一权威。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "本机体验",
+      "items": [
+        "浏览器只访问 PC 的回环 WebUI；浏览器不接触中央秘密凭据。",
+        "PC Outbox 在断网时保留未确认事实，收到 ACK 后再确认送达。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "AI 读取",
+      "items": [
+        "AI Reader 使用独立长期凭据，不复用设备上传凭据。",
+        "AI 通过 MCP 或兼容读取路径主动拉取；首版没有服务器主动推送。"
+      ]
+    }
+  ]
+}

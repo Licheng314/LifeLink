@@ -1,0 +1,23 @@
+# Local Android and IDE state
+.gradle/
+.idea/
+local.properties
+*.iml
+
+# Generated build outputs
+build/
+app/build/
+*.apk
+*.aab
+
+# Signing credentials and secrets
+*.jks
+*.keystore
+keystore.properties
+
+# Local logs and runtime data
+*.log
+*.db
+*.db-shm
+*.db-wal
+

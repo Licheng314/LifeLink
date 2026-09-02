@@ -1,0 +1,18 @@
+{
+  "batch_id": "371d4e37-77a7-42df-b21f-55ddffbfb527",
+  "accepted_event_ids": [
+    "50906590-cf23-4ac3-bb74-93db5e19ec12"
+  ],
+  "confirmed_event_ids": [
+    "50906590-cf23-4ac3-bb74-93db5e19ec12"
+  ],
+  "duplicate_event_ids": [],
+  "event_results": [
+    {
+      "event_id": "50906590-cf23-4ac3-bb74-93db5e19ec12",
+      "status": "stored"
+    }
+  ],
+  "rejected_events": [],
+  "received_at": "2026-07-30T14:20:11Z"
+}

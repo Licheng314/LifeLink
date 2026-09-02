@@ -1,0 +1,20 @@
+/* Tools */
+.tools-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 20px; box-shadow: var(--shadow); }
+.tools-card h3 { font-size: 16px; margin-bottom: 14px; }
+.tools-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.tools-input { flex: 1; min-width: 280px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: var(--font); }
+.tools-input:focus { outline: none; border-color: var(--accent); }
+.tools-btn { padding: 10px 18px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; background: var(--accent); color: #fff; }
+.tools-btn:hover { filter: brightness(1.05); }
+.tools-btn:disabled { opacity: .55; cursor: not-allowed; }
+.tools-btn.secondary { background: var(--tag-bg); color: var(--text); }
+.tools-status { margin-top: 12px; font-size: 13px; color: var(--text-secondary); min-height: 20px; word-break: break-all; }
+.tools-jobs { margin-top: 14px; font-size: 13px; }
+.tools-jobs .job { padding: 8px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 12px; }
+.tools-jobs .job:last-child { border-bottom: none; }
+.job-status { font-weight: 600; white-space: nowrap; }
+.job-status.queued { color: var(--text-secondary); }
+.job-status.processing { color: var(--info); }
+.job-status.completed { color: var(--success); }
+.job-status.failed { color: var(--danger); }
+.tools-hint { font-size: 12px; color: var(--text-secondary); margin-top: 8px; }

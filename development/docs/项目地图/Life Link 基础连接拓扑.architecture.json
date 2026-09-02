@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Life Link 基础连接拓扑",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [1100, 650]
+  },
+  "components": [
+    {
+      "id": "ai_companion",
+      "type": "external",
+      "label": "AI 伴侣",
+      "sublabel": "通过 MCP 读取生活上下文",
+      "pos": [100, 105],
+      "size": [220, 82]
+    },
+    {
+      "id": "central_server",
+      "type": "backend",
+      "label": "Life Link 服务端",
+      "sublabel": "中央数据与配对服务",
+      "pos": [100, 285],
+      "size": [220, 82]
+    },
+    {
+      "id": "pc_client_1",
+      "type": "frontend",
+      "label": "PC 客户端 1",
+      "sublabel": "本机数据采集与 WebUI",
+      "pos": [100, 465],
+      "size": [220, 82]
+    },
+    {
+      "id": "https_tunnel",
+      "type": "cloud",
+      "label": "HTTPS 公网入口",
+      "sublabel": "Tailscale 或花生壳内网穿透",
+      "pos": [440, 285],
+      "size": [240, 82]
+    },
+    {
+      "id": "pc_client_2",
+      "type": "frontend",
+      "label": "PC 客户端 2",
+      "sublabel": "远程电脑",
+      "pos": [815, 175],
+      "size": [210, 82]
+    },
+    {
+      "id": "android_client",
+      "type": "frontend",
+      "label": "Android 客户端",
+      "sublabel": "手机采集与同步",
+      "pos": [815, 395],
+      "size": [210, 82]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "同一台电脑",
+      "wraps": ["ai_companion", "central_server", "pc_client_1"],
+      "pad": 32
+    }
+  ],
+  "connections": [
+    {
+      "id": "ai_read",
+      "from": "ai_companion",
+      "to": "central_server",
+      "label": "MCP 只读访问",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24,
+      "variant": "emphasis"
+    },
+    {
+      "id": "local_sync",
+      "from": "pc_client_1",
+      "to": "central_server",
+      "label": "本机采集与同步",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "remote_pc_https",
+      "from": "pc_client_2",
+      "to": "https_tunnel",
+      "label": "HTTPS 上传与读取",
+      "fromSide": "left",
+      "toSide": "right",
+      "variant": "security"
+    },
+    {
+      "id": "android_https",
+      "from": "android_client",
+      "to": "https_tunnel",
+      "label": "HTTPS 上传与读取",
+      "fromSide": "left",
+      "toSide": "right",
+      "variant": "security"
+    },
+    {
+      "id": "tunnel_forward",
+      "from": "https_tunnel",
+      "to": "central_server",
+      "label": "内网穿透映射至中央端口",
+      "fromSide": "left",
+      "toSide": "right",
+      "variant": "emphasis"
+    }
+  ]
+}

@@ -1,0 +1,3822 @@
+openapi: 3.1.0
+info:
+  title: Life Link Context Sync API
+  version: 1.15.5
+  description: |
+    Android、PC/Web 采集器与中央上下文服务之间的同步协议。
+    所有时间均为 UTC ISO 8601（带 Z），持续时长单位为秒。
+    v1.1 保持 /v1 路径和 v1 请求信封兼容，并增加逐事件确认与可选修订号。
+    v1.2 增加使用独立只读凭据的中央设备与应用用量 MVP 查询。
+    v1.3 增加使用短期一次性邀请凭据的远端 PC 在线配对端点。
+    v1.4 增加中央生成的设备用量与位置 AI 上下文 Markdown 摘要端点。
+    v1.5 增加黑名单规则中央统一管理，已注册设备凭据或只读凭据均可读取，已注册设备凭据可管理。
+    v1.6 增加中央权威的跨日共享设置；只读凭据或已注册设备可读取，任一已注册设备可修改。
+    v1.6.1 为不支持 PATCH 的 HTTPS 映射增加同语义 POST 更新入口；PATCH 继续兼容。
+    v1.7 追加心愿、每日评估、时间线和触发器资源；不改变既有事件上传 ACK、跨日设置或黑名单语义。
+    v1.7.1 为黑名单用量触发器增加全平台汇总范围，并约定晚间使用触发器以 device_id=all 表示全部设备；单平台黑名单规则的匹配语义不变。
+    v1.7.2 约定新心愿从创建所在业务日开始计第 1 天；既有心愿的固定日期和跨日快照保持不变。
+    v1.8.0 新增仅修改心愿文字的 PATCH 和任意状态 DELETE。删除由中央原子清除心愿生命周期数据与关联触发器，保留真实触发事实但解除索引，并以不含用户内容的最小墓碑阻止原创建请求的延迟重试复活心愿。
+    v1.8.1 为会阻断 PATCH/DELETE 的 HTTPS 映射增加心愿与触发器 POST 兼容入口；标准 PATCH/DELETE 继续保留，PC 与 Android 默认使用 POST 兼容入口。
+    v1.9.0 增加中央设备自定义名称与逻辑删除。稳定 device_id、原始事件和历史批次不变；删除会撤销凭据、隐藏当前设备并停用明确绑定该设备的用量触发器，重新接入必须使用新邀请。
+    v1.10.0 增加健康信息读取与 Android 计步观察事件。睡眠参考由中央综合 PC/Android 明确交互动态估算；步数按 Android 设备和计数会话差分，不跨设备求和。
+    v1.10.1 明确睡眠候选由醒后最早真实使用立即闭合，不等待中午；增加结果完成时刻、区间跨度和睡前/醒后边界设备。短暂夜间使用被后续证据合并时允许动态延伸结果。
+    v1.10.2 为会阻断 PATCH 的 HTTPS 映射增加黑名单规则 POST 兼容更新入口；标准 PATCH 继续保留，PC 默认使用 POST 兼容入口。
+    v1.10.3 为每台 Android 计步设备增加自然日 0–23 时的固定 24 项步数分布；每段增量完整归入后一个观察所在小时，不跨设备合计。
+    v1.11.0 增加中央活动状态派生与主健康手机共享设置；活动区间按请求的业务日窗口融合主手机步数/位置与全部设备真实使用，不固化第二份事实。
+    v1.11.1 为每个活动区间增加可空的代表地址与经纬度，便于 WebUI 解释定位证据；不改变原始定位事实或活动分类算法。
+    v1.12.0 增加心愿手动完结入口：最后一个业务日结束且全部日期已评估后，用户可确认归档并生成结果事件；未处理时仍保留 72 小时自动终结。
+    v1.13.0 增加中央事件背景摘要与 AI 理解说明读取、固定系统里程碑、心愿定时提醒和共享报告调度设置；报告只预留同一事件上的投送展示状态，不引入 AI 凭据、调用、重试或游标。
+    v1.13.1 将设备使用系统里程碑改为按设备独立生成并只附带应用/网站合并 Top 5；背景实时设备与应用只返回 15 分钟内仍在线的设备并按设备相邻排列；心愿关联触发器在固定 ends_on 后立即停止。
+    v1.13.2 修正固定系统晚睡在线检查为睡觉时间后每 30 分钟执行一次；新事件证据规则使用 late_online_half_hourly，旧事件保留 late_online_hourly 以便历史读取。
+    v1.14.0 增加独立 AI reader 被动只读协议：短期 pairing token 一次领取长期只读凭据，背景全量、时间线事件按 reader/epoch/业务日不透明游标增量、理解说明按版本返回，并由注册设备管理 reader 和仅表示 served 的访问记录。跨日自动切换到当前业务日，首版不含人工重放/跳过积压、主动信号、Webhook、AI 写入或 WebUI。
+    v1.15.0 增加 AI reader 内置管理与事件可见性：注册设备可生成本机配对文本、清理单个 reader 的当前读取进度；时间线动态标注当前 reader 是否已获得事件。AI 连接和成功提供上下文会生成低优先级审计事件，但这些审计事件永不进入 AI reader 响应。AI 显示名称由当前有效 reader 身份投影，不再允许手动修改。
+    v1.15.1 将全部低优先级时间线事件排除在 AI reader 响应之外，并增加注册设备可用的无副作用“下一次读取原文”预览；预览遵循当前 reader 最新已签发游标，但不签发可用游标、不写访问记录、不推进标记。
+    v1.15.3 固定个人模式只连接一个 AI：新 reader 成功领取时原子撤销其他 reader Token并保留历史审计；AI 上下文把 understanding 放在背景和事件之前，并允许同机 reader 在配对时保存不含完整路径和 PID 的稳定应用进程绑定。
+    v1.15.4 为时间线读取增加 ETag 条件校验；内容未变化时返回无正文的 304，避免 PC 小窗与 WebUI 重复下载完整业务日数据。
+    v1.15.5 增加周历业务日摘要读取；以共享跨日起点按互斥模块返回逻辑内容量，不改变认证、上传或 SQLite 数据。
+servers:
+  - url: https://{host}
+    variables:
+      host:
+        default: context.example.com
+paths:
+  /v1/health:
+    get:
+      summary: 检查上下文服务状态
+      operationId: getHealth
+      responses:
+        '200':
+          description: 服务可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /v1/health-info:
+    get:
+      summary: 读取指定本地日期的中央健康参考信息
+      operationId: getHealthInfo
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      parameters:
+        - name: date
+          in: query
+          required: true
+          description: 按共享 Asia/Shanghai 时区解释的醒来日/步数统计日。
+          schema:
+            type: string
+            format: date
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+      responses:
+        '200':
+          description: 动态计算的睡眠参考与按 Android 设备拆分的步数（含后一个观察所在本地小时的 24 项分布）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthInfoResponse'
+        '400':
+          description: date 缺失或不是严格 YYYY-MM-DD。
+        '401':
+          description: 缺少或无法识别的 Bearer Token。
+  /v1/enrollments/claim:
+    post:
+      summary: 使用一次性邀请为一台远端 PC 申领长期客户端配置
+      operationId: claimEnrollmentInvitation
+      security:
+        - invitationBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollmentClaim'
+      responses:
+        '200':
+          description: |
+            首次领取成功，或同一邀请、同一稳定 device_id 在响应丢失后的幂等重试。
+            返回 life-radio-client-profile-v1；upload scope 必须省略 read_token。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LifeRadioClientProfile'
+        '400':
+          description: 请求 schema、平台或设备身份格式不合法
+        '401':
+          description: 邀请 Token 无效、撤销、未知，或 invitation_id 与 Token 不匹配
+        '409':
+          description: invitation_already_claimed；该邀请已绑定到另一稳定 device_id
+        '410':
+          description: invitation_expired；邀请超过 expires_at，适用于首次领取和已领取同设备的幂等重试
+        '429':
+          description: 领取尝试过于频繁
+        '503':
+          description: 无法原子持久化绑定、长期凭据或热更新运行时鉴权；不返回部分配置
+  /v1/ai-readers/pairings/claim:
+    post:
+      summary: Claim a long-lived passive AI reader credential with a short-lived pairing token.
+      operationId: claimAIReaderPairing
+      security:
+        - aiReaderPairingAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIReaderPairingClaim'
+      responses:
+        '200':
+          description: The long-lived access_token is returned exactly once. A lost response requires a new pairing; no management or retry endpoint can recover the plaintext token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderPairingClaimResponse'
+        '400':
+          description: The strict claim body or reader identity is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderError'
+        '401':
+          description: pairing_unauthorized; the pairing Token is invalid, unknown, revoked, or does not belong to pairing_id. The response never reveals pairing state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderError'
+        '409':
+          description: ai_reader_pairing_already_claimed; the one-time long-lived token has already been returned and cannot be recovered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderError'
+        '410':
+          description: ai_reader_pairing_expired; the short-lived pairing exceeded expires_at.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderError'
+        '429':
+          description: Pairing claim attempts are rate limited.
+  /v1/ai-readers/pairings:
+    post:
+      summary: Generate one short-lived local AI reader pairing text.
+      operationId: createAIReaderPairing
+      security:
+        - registeredDeviceAuth: []
+      responses:
+        '201':
+          description: Returns one 24-hour, single-claim pairing artifact. It contains a secret pairing Token and must not be cached or logged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderPairingCreateResponse'
+        '401':
+          description: Missing or invalid registered-device credential.
+  /v1/read/ai/context:
+    get:
+      summary: Read the passive AI context as a full background plus incremental timeline events.
+      description: |
+        This endpoint returns only central projections approved for an AI reader. It never returns raw
+        client collection events, raw GPS, credentials, SQLite data, or write capabilities. A successful
+        response may be recorded as served, never as read, understood, displayed, or acknowledged by AI.
+        Report prose remains frozen in TimelineEvent.evidence.body; delivery display state is not report prose.
+      operationId: readAIContext
+      security:
+        - aiReaderAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AIReaderBusinessDate'
+        - $ref: '#/components/parameters/AIReaderCursor'
+        - $ref: '#/components/parameters/AIReaderUnderstandingVersion'
+        - $ref: '#/components/parameters/AIReaderView'
+      responses:
+        '200':
+          description: Full or compact current background, current-business-day events after the reader-bound cursor (or the whole new business day after rollover), versioned understanding guidance, and a newly signed opaque cursor.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/AIReaderContextResponse'
+                  - $ref: '#/components/schemas/AIReaderCompactContextResponse'
+        '400':
+          description: invalid_cursor or invalid business_date/understanding_version. A malformed, tampered, or different-reader cursor is never treated as an empty page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderError'
+        '401':
+          description: invalid_ai_reader_token or ai_reader_token_expired; the AI reader Token is missing, invalid, expired, or revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderError'
+        '409':
+          description: cursor_superseded; the cursor belongs to an older cursor epoch after re-pairing or a user clear-reading-progress action and must not be accepted. The AI should discard it and retry once without cursor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderError'
+        '410':
+          description: cursor_expired; the opaque cursor exceeded its validity period and a cursorless read or reset is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderError'
+  /v1/ai-readers:
+    get:
+      summary: List AI readers and their minimal passive-read state.
+      operationId: listAIReaders
+      security:
+        - registeredDeviceAuth: []
+      responses:
+        '200':
+          description: Reader identities and state only; access_token, Authorization, pairing text, and raw GPS are never returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderListResponse'
+        '401':
+          description: Missing or invalid registered-device credential.
+  /v1/ai-readers/{reader_id}/access-logs:
+    get:
+      summary: List minimal served-response audit records for one AI reader.
+      operationId: listAIReaderAccessLogs
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AIReaderId'
+      responses:
+        '200':
+          description: Records mean served only, never AI-read or understood; they contain no Token, Authorization, full pairing text, response body, database query, or raw GPS.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderAccessLogListResponse'
+        '401':
+          description: Missing or invalid registered-device credential.
+        '404':
+          description: ai_reader_not_found.
+  /v1/ai-readers/{reader_id}/process-status:
+    get:
+      summary: Detect the paired same-machine application process for one AI reader.
+      operationId: getAIReaderProcessStatus
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AIReaderId'
+      responses:
+        '200':
+          description: True only when the reader's stable process binding matches a current Windows process; null means unbound or unverifiable and must be hidden by clients.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [reader_id, process_running, process_display_name]
+                properties:
+                  reader_id:
+                    type: string
+                    format: uuid
+                  process_running:
+                    type: [boolean, 'null']
+                  process_display_name:
+                    type: [string, 'null']
+        '401':
+          description: Missing or invalid registered-device credential.
+        '404':
+          description: ai_reader_not_found.
+  /v1/ai-readers/{reader_id}/context-preview:
+    get:
+      summary: Preview the next AI reader context without advancing its cursor.
+      operationId: previewAIReaderContext
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AIReaderId'
+        - $ref: '#/components/parameters/AIReaderView'
+      responses:
+        '200':
+          description: Uses the latest cursor issued in the reader's current epoch and previews the next compact context while always expanding the understanding guide for human inspection. It does not issue a usable cursor, write an access log, update reader state, or create an audit event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIReaderContextPreviewResponse'
+        '400':
+          description: invalid_ai_context_preview_request.
+        '401':
+          description: Missing or invalid registered-device credential.
+        '404':
+          description: ai_reader_not_found.
+        '409':
+          description: The selected reader is expired or revoked and cannot perform a next read.
+  /v1/ai-readers/{reader_id}/clear-reading-progress:
+    post:
+      summary: Clear current served markers and make the AI reread the current business day.
+      operationId: clearAIReaderProgress
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AIReaderId'
+      responses:
+        '200':
+          description: Increments cursor_epoch and clears current marker positions while retaining access logs. Existing opaque cursors return 409; a cursorless retry receives all eligible current-business-day events.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [reader]
+                properties:
+                  reader:
+                    $ref: '#/components/schemas/AIReader'
+        '401':
+          description: Missing or invalid registered-device credential.
+        '404':
+          description: ai_reader_not_found.
+  /v1/ai-readers/{reader_id}:
+    delete:
+      summary: Revoke one AI reader credential.
+      operationId: revokeAIReader
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AIReaderId'
+      responses:
+        '204':
+          description: The reader credential is revoked idempotently. Subsequent context reads return 401; timeline facts and minimal audit records remain.
+        '401':
+          description: Missing or invalid registered-device credential.
+        '404':
+          description: ai_reader_not_found.
+  /v1/events/batches:
+    post:
+      summary: 上传一批上下文事件
+      operationId: ingestEventBatch
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 与 batch_id 相同的 UUID；相同 key 的重试不得重复写入。
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventBatch'
+      responses:
+        '200':
+          description: |
+            已处理；可部分接受。v1.1 客户端只将 confirmed_event_ids 中的事件
+            标记为已送达；accepted_event_ids 仅为 v1.0 兼容字段。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchAcknowledgement'
+        '400':
+          description: 请求格式或字段不合法
+        '401':
+          description: 缺失或无效的 Bearer Token
+        '429':
+          description: 上传过于频繁；客户端应按 Retry-After 重试
+        '500':
+          description: 临时服务端错误；客户端应保留本地队列后重试
+  /v1/read/devices:
+    get:
+      summary: 查询一个 UTC 时间窗口内的中央设备概览
+      operationId: readCentralDevices
+      security:
+        - readBearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ReadFrom'
+        - $ref: '#/components/parameters/ReadTo'
+        - $ref: '#/components/parameters/LocalDeviceId'
+      responses:
+        '200':
+          description: |
+            返回中央库中的设备及其窗口统计。last_seen_at 和 status 只描述最后一次
+            成功同步的新鲜度，不证明设备当前联网或服务可访问。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadDevicesResponse'
+        '400':
+          description: from/to 缺失、不是 UTC Z 时间、from 不早于 to，或查询窗口不受支持
+        '401':
+          description: 缺失或无效的独立只读 Bearer Token
+        '403':
+          description: 凭据是设备上传 Token 或不具备中央读取权限
+  /v1/read/usage:
+    get:
+      summary: 查询一个 UTC 时间窗口内的多设备应用使用聚合
+      operationId: readCentralUsage
+      security:
+        - readBearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ReadFrom'
+        - $ref: '#/components/parameters/ReadTo'
+        - $ref: '#/components/parameters/LocalDeviceId'
+      responses:
+        '200':
+          description: 返回足以代理为现有 PC /api/usage 响应的设备与总集聚合
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadUsageResponse'
+        '400':
+          description: from/to 缺失、不是 UTC Z 时间、from 不早于 to，或查询窗口不受支持
+        '401':
+          description: 缺失或无效的独立只读 Bearer Token
+        '403':
+          description: 凭据是设备上传 Token 或不具备中央读取权限
+  /v1/read/locations:
+    get:
+      summary: 查询位置事实与中央分钟级活动状态派生
+      operationId: readCentralLocations
+      security:
+        - readBearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ReadFrom'
+        - $ref: '#/components/parameters/ReadTo'
+        - $ref: '#/components/parameters/LocalDeviceId'
+      responses:
+        '200':
+          description: 保留既有位置观察/位置段，并增加按同一请求窗口动态计算的 activity_state。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadLocationsResponse'
+        '400':
+          description: from/to 无效或窗口超过 24 小时
+        '401':
+          description: 缺失或无效的独立只读 Bearer Token
+        '403':
+          description: 设备上传 Token 不具备 /v1/read/* 权限
+  /v1/devices:
+    get:
+      summary: 列出当前未删除的中央设备及其用户名称
+      operationId: listManagedDevices
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      responses:
+        '200':
+          description: 仅返回未逻辑删除的设备。display_name 始终为中央当前有效名称。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedDeviceListResponse'
+        '401':
+          description: 缺失或无效的只读或注册设备凭据
+  /v1/devices/{device_id}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    patch:
+      summary: 设置设备的中央自定义名称
+      operationId: renameDevice
+      security:
+        - registeredDeviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceNamePatch'
+      responses:
+        '200':
+          description: 更新后的中央设备记录；稳定 device_id 和客户端上报原名不变
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedDevice'
+        '400':
+          description: 请求体不严格或名称不是 1 至 100 个字符
+        '401':
+          description: 缺失或无效的注册设备凭据
+        '404':
+          description: device_not_found；设备不存在或已经逻辑删除
+    post:
+      summary: 通过传输兼容方法设置设备的中央自定义名称
+      description: 与同路径 PATCH 完全等价，供阻断 PATCH 的 HTTPS 映射使用。
+      operationId: renameDeviceViaPost
+      security:
+        - registeredDeviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceNamePatch'
+      responses:
+        '200':
+          description: 与 PATCH 相同的中央最终记录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedDevice'
+        '400':
+          description: 无效名称或请求体
+        '401':
+          description: 缺失或无效的注册设备凭据
+        '404':
+          description: device_not_found
+    delete:
+      summary: 逻辑删除设备并撤销其凭据
+      operationId: retireDevice
+      security:
+        - registeredDeviceAuth: []
+      responses:
+        '204':
+          description: |
+            设备已逻辑删除，或同一删除请求已完成。原始事件、批次、稳定 device_id
+            与历史设备名称保留；该设备凭据被撤销，明确绑定它的 device_usage_milestone
+            触发器被停用。重新接入必须领取新邀请。
+        '401':
+          description: 缺失或无效的注册设备凭据
+        '404':
+          description: device_not_found
+        '409':
+          description: cannot_delete_current_device 或 credential_source_not_mutable
+  /v1/devices/{device_id}/delete:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    post:
+      summary: 通过传输兼容方法逻辑删除设备
+      description: 与 DELETE /v1/devices/{device_id} 完全等价。
+      operationId: retireDeviceViaPost
+      security:
+        - registeredDeviceAuth: []
+      responses:
+        '204':
+          description: 与标准 DELETE 相同
+        '401':
+          description: 缺失或无效的注册设备凭据
+        '404':
+          description: device_not_found
+        '409':
+          description: cannot_delete_current_device 或 credential_source_not_mutable
+  /v1/read/ai/usage.md:
+    get:
+      summary: 获取中央生成的设备用量 AI 上下文 Markdown
+      operationId: readCentralAiUsageSummary
+      security:
+        - readBearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ReadFrom'
+        - $ref: '#/components/parameters/ReadTo'
+        - $ref: '#/components/parameters/LocalDeviceId'
+      responses:
+        '200':
+          description: 包含设备用量、黑名单和近期排行等口径的 AI 可读 Markdown 摘要
+          content:
+            text/markdown:
+              schema:
+                type: string
+        '400':
+          description: from/to 缺失或无效
+        '401':
+          description: 缺失或无效的独立只读 Bearer Token
+        '403':
+          description: 凭据是设备上传 Token 或不具备中央读取权限
+  /v1/read/ai/location.md:
+    get:
+      summary: 获取中央生成的位置轨迹 AI 上下文 Markdown
+      operationId: readCentralAiLocationSummary
+      security:
+        - readBearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ReadFrom'
+        - $ref: '#/components/parameters/ReadTo'
+        - $ref: '#/components/parameters/LocalDeviceId'
+      responses:
+        '200':
+          description: 包含最近位置、停留时间最长位置和轨迹统计的 AI 可读 Markdown 摘要
+          content:
+            text/markdown:
+              schema:
+                type: string
+        '400':
+          description: from/to 缺失或无效
+        '401':
+          description: 缺失或无效的独立只读 Bearer Token
+        '403':
+          description: 凭据是设备上传 Token 或不具备中央读取权限
+  /v1/wishes:
+    get:
+      summary: List central wishes, including archived history when requested.
+      operationId: listWishes
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      parameters:
+        - name: include_archived
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Central authoritative wishes and their fixed wish_days.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishListResponse'
+        '401':
+          description: Missing or invalid read or registered-device Bearer token.
+    post:
+      summary: Create a central wish and its fixed 3 or 7 business-day records.
+      operationId: createWish
+      security:
+        - registeredDeviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishCreate'
+      responses:
+        '201':
+          description: The central final record, including settings snapshot and all fixed wish_days.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wish'
+        '400':
+          description: Invalid wish text or duration.
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '409':
+          description: unarchived_wish_limit_reached, or idempotency_conflict when request_id is retried with a different normalized body; central transaction keeps at most three unarchived wishes. A request_id retained by a deletion tombstone still returns idempotency_conflict for a different normalized body.
+        '410':
+          description: wish_deleted; a delayed retry whose request_id and normalized body match a deleted wish's original creation request never recreates that wish.
+  /v1/wishes/{wish_id}:
+    get:
+      summary: Read one central wish and its daily records.
+      operationId: getWish
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WishId'
+      responses:
+        '200':
+          description: Central authoritative wish.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wish'
+        '401':
+          description: Missing or invalid read or registered-device Bearer token.
+        '404':
+          description: wish_not_found.
+    patch:
+      summary: Update only the text of one central wish.
+      operationId: updateWishText
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WishId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishTextPatch'
+      responses:
+        '200':
+          description: Central final wish. Text updates are allowed for active, cancelled, and archived wishes. The text mutation itself does not change fixed days, results, snapshots, trigger configuration, or timeline events; the existing due-wish lazy finalization still runs before this write and may independently archive an overdue wish and append wish.period_completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wish'
+        '400':
+          description: Invalid body, including a body that is not exactly the required text field or text outside the normalized 1..30 Unicode character limit.
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: wish_not_found.
+    post:
+      summary: Update only the text of one central wish through the transport-compatible method.
+      description: Semantically identical to PATCH on this path. Clients use POST when the deployed HTTPS mapping rejects PATCH.
+      operationId: updateWishTextViaPost
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WishId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishTextPatch'
+      responses:
+        '200':
+          description: Central final wish; identical to the PATCH response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wish'
+        '400':
+          description: Invalid text-only body.
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: wish_not_found.
+    delete:
+      summary: Permanently delete one central wish in any lifecycle state.
+      operationId: deleteWish
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WishId'
+      responses:
+        '204':
+          description: |-
+            Deletion completed, or this wish was already deleted and is represented by its deletion tombstone. The central transaction deletes the wish, its fixed wish_days, its associated event_triggers, and pure wish lifecycle timeline events (wish.created, wish.cancelled, wish.period_completed, wish.result_revised). It retains real trigger events as historical facts but atomically sets their wish_id and trigger_id to null; original device events are never changed. The tombstone retains only wish_id, the original creation request_id and normalized-body identity, and deleted_at—never wish text, fixed dates, assessments, trigger configuration, or timeline content. A same request_id plus same normalized creation body is rejected later by POST /v1/wishes with 410 wish_deleted, while a different body remains 409 idempotency_conflict; neither path can recreate the wish.
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: wish_not_found; no current wish or deletion tombstone exists for this ID.
+  /v1/wishes/{wish_id}/delete:
+    post:
+      summary: Permanently delete one central wish through the transport-compatible method.
+      description: Semantically identical to DELETE /v1/wishes/{wish_id}. Clients use this POST path when the deployed HTTPS mapping rejects DELETE.
+      operationId: deleteWishViaPost
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WishId'
+      responses:
+        '204':
+          description: Deletion completed, or this wish was already deleted and has a tombstone; response body is empty.
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: wish_not_found; no current wish or deletion tombstone exists for this ID.
+  /v1/wishes/{wish_id}/complete:
+    post:
+      summary: Manually complete and archive an expired wish.
+      description: After the final wish business day has ended, a registered device may explicitly complete the wish only when every fixed wish day has a manual evaluation. Central atomically appends one wish.period_completed event, archives the wish, and disables its linked trigger. Repeating the request for the already archived wish returns the current record without another event. This does not replace the 72-hour automatic fallback.
+      operationId: completeWish
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WishId'
+      responses:
+        '200':
+          description: Central final archived wish.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wish'
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: wish_not_found.
+        '409':
+          description: wish_not_completable when the final business day has not ended or the wish is cancelled; wish_days_incomplete includes missing_business_dates when one or more fixed days still have null evaluation.
+  /v1/wishes/{wish_id}/cancel:
+    post:
+      summary: Cancel an unarchived wish without deleting it or its daily records.
+      operationId: cancelWish
+      deprecated: true
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WishId'
+      responses:
+        '200':
+          description: Legacy compatibility only; new clients must use DELETE /v1/wishes/{wish_id} after an explicit permanent-delete confirmation. This endpoint returns the central final cancelled and archived wish; cancellation releases one unarchived slot. Repeating cancellation for this same cancelled wish returns this current final record with 200; only a normally archived (not cancelled) wish returns 409 wish_not_cancellable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wish'
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: wish_not_found.
+        '409':
+          description: wish_not_cancellable; the wish is normally archived rather than cancelled.
+  /v1/wishes/{wish_id}/days/{business_date}:
+    put:
+      summary: Manually create or revise the assessment for one reached wish day.
+      operationId: assessWishDay
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WishId'
+        - $ref: '#/components/parameters/BusinessDate'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WishDayAssessment'
+      responses:
+        '200':
+          description: Central final daily record. Historical revisions are allowed, including after archive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WishDay'
+        '400':
+          description: Invalid assessment body or business_date outside this wish's fixed days.
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: wish_not_found or wish_day_not_found.
+        '409':
+          description: future_wish_day; a future business date cannot be assessed.
+  /v1/timeline-events:
+    get:
+      summary: Read user-facing central timeline events in stable reverse chronological order.
+      operationId: listTimelineEvents
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ReadFrom'
+        - $ref: '#/components/parameters/ReadTo'
+        - $ref: '#/components/parameters/TimelineCategory'
+        - $ref: '#/components/parameters/TimelineWishId'
+        - $ref: '#/components/parameters/TimelineImportance'
+        - name: If-None-Match
+          in: header
+          required: false
+          description: Previously returned timeline ETag for private conditional revalidation.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ordered by occurred_at DESC, timeline_event_id DESC. This endpoint deliberately has no cursor.
+          headers:
+            ETag:
+              description: Quoted SHA-256 of UTF-8 canonical JSON (sorted object keys, compact separators, Unicode preserved) for the complete response projection.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimelineEventListResponse'
+        '304':
+          description: If-None-Match matched the current timeline representation; response body is empty.
+          headers:
+            ETag:
+              description: The unchanged strong content version.
+              schema:
+                type: string
+        '400':
+          description: Invalid UTC Z range, range order, or filter value.
+        '401':
+          description: Missing or invalid read or registered-device Bearer token.
+  /v1/trigger-types:
+    get:
+      summary: Read the central catalog of supported event-trigger types.
+      operationId: listTriggerTypes
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      responses:
+        '200':
+          description: Read-only catalog; each type publishes its strict parameter object and version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerTypeCatalogResponse'
+        '401':
+          description: Missing or invalid read or registered-device Bearer token.
+  /v1/event-triggers:
+    get:
+      summary: List configured central event-trigger instances.
+      operationId: listEventTriggers
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      responses:
+        '200':
+          description: Central authoritative trigger instances.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventTriggerListResponse'
+        '401':
+          description: Missing or invalid read or registered-device Bearer token.
+    post:
+      summary: Create a configured central event trigger.
+      operationId: createEventTrigger
+      security:
+        - registeredDeviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventTriggerCreate'
+      responses:
+        '201':
+          description: Central final trigger instance.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventTrigger'
+        '400':
+          description: Invalid request_id, type, config_version, parameters, interval, or wish association.
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: Referenced wish_not_found.
+        '409':
+          description: trigger_configuration_conflict when wish_id does not reference a status=active wish; or idempotency_conflict when request_id is retried with a different normalized body.
+  /v1/event-triggers/{trigger_id}:
+    patch:
+      summary: Update a configured event trigger, including its enabled state.
+      operationId: updateEventTrigger
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TriggerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventTriggerPatch'
+      responses:
+        '200':
+          description: Central final trigger instance after update or enable/disable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventTrigger'
+        '400':
+          description: Invalid patch, type-version mismatch, or undeclared parameter field.
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: trigger_not_found.
+        '409':
+          description: trigger_configuration_conflict when assigning a non-active wish, or when attempting to re-enable or modify the association/configuration of a trigger whose wish was cancelled or normally archived. Deletion remains allowed.
+    post:
+      summary: Update a configured event trigger through the transport-compatible method.
+      description: Semantically identical to PATCH on this path. Clients use POST when the deployed HTTPS mapping rejects PATCH.
+      operationId: updateEventTriggerViaPost
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TriggerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventTriggerPatch'
+      responses:
+        '200':
+          description: Central final trigger instance; identical to the PATCH response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventTrigger'
+        '400':
+          description: Invalid trigger update.
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: trigger_not_found.
+        '409':
+          description: trigger_configuration_conflict under the same conditions as PATCH.
+    delete:
+      summary: Delete a configured event trigger.
+      operationId: deleteEventTrigger
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TriggerId'
+      responses:
+        '204':
+          description: Trigger deleted.
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: trigger_not_found.
+  /v1/event-triggers/{trigger_id}/delete:
+    post:
+      summary: Delete a configured event trigger through the transport-compatible method.
+      description: Semantically identical to DELETE /v1/event-triggers/{trigger_id}. Clients use this POST path when the deployed HTTPS mapping rejects DELETE.
+      operationId: deleteEventTriggerViaPost
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TriggerId'
+      responses:
+        '204':
+          description: Trigger deleted; response body is empty.
+        '401':
+          description: Missing or invalid registered-device Bearer token.
+        '404':
+          description: trigger_not_found.
+  /v1/event-background:
+    get:
+      summary: Read the central event-page background summary and AI understanding guidance for one business day.
+      operationId: getEventBackground
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BusinessDate'
+      responses:
+        '200':
+          description: |
+            A dynamic, read-only central projection for the requested Life Link business day. It includes
+            only facts available at generated_at. It retains the latest real-time background entry for WebUI
+            even when stale, marking it with is_stale and its observed_at; only entries with include_in_ai=true
+            may enter an AI background. This resource neither creates timeline events nor
+            stores an AI cursor, credentials, provider, model, or delivery retry state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventBackgroundResponse'
+        '400':
+          description: Invalid business_date.
+        '401':
+          description: Missing or invalid read or registered-device Bearer token.
+  /v1/calendar-days:
+    get:
+      summary: Read logical central content sizes for inclusive Life Link business dates.
+      operationId: listCalendarDays
+      description: |
+        Returns at most 42 inclusive business dates using the central shared timezone and day_start_hour.
+        total_bytes is logical UTF-8 content, not SQLite file size: each raw event counts only its canonical
+        event_json once; timeline rows count their stable user-readable persisted fields and JSON fields.
+        Modules are mutually exclusive: app.foreground, web.foreground, and device.input_state are usage;
+        location.* is location; health.* is health; timeline_events is timeline; every other raw event is other.
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CalendarFrom'
+        - $ref: '#/components/parameters/CalendarTo'
+      responses:
+        '200':
+          description: Ordered inclusive from business date to business date; total_bytes equals the sum of all five module byte values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarDaysResponse'
+        '400':
+          description: Invalid, reversed, repeated, missing, or more-than-42-day date range.
+        '401':
+          description: Missing or invalid read or registered-device Bearer token.
+  /v1/settings/shared:
+    get:
+      summary: 读取中央权威的跨日共享设置
+      operationId: getSharedSettings
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      responses:
+        '200':
+          description: timezone 在第一阶段固定为 Asia/Shanghai。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SharedSettings'
+        '401':
+          description: 缺失或无效的独立只读或已注册设备 Bearer Token
+    patch:
+      summary: 修改中央共享的业务日起始小时或主健康手机（兼容入口）
+      operationId: updateSharedSettings
+      security:
+        - registeredDeviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SharedSettingsPatch'
+      responses:
+        '200':
+          description: 修改已持久化；相同值的重复写入保持版本和更新时间不变。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SharedSettings'
+        '400':
+          description: 请求字段或值无效，或主健康设备不是当前 Android 设备
+        '401':
+          description: 缺失或无效的已注册设备 Bearer Token；独立只读 Token 不具备设备修改权限
+    post:
+      summary: 修改中央共享的业务日起始小时或主健康手机
+      description: 与 PATCH 语义完全相同；PC 默认使用 POST，以兼容会阻断 PATCH 的 HTTPS 映射。
+      operationId: updateSharedSettingsViaPost
+      security:
+        - registeredDeviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SharedSettingsPatch'
+      responses:
+        '200':
+          description: 修改已持久化；相同值的重复写入保持版本和更新时间不变。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SharedSettings'
+        '400':
+          description: 请求字段或值无效，或主健康设备不是当前 Android 设备
+        '401':
+          description: 缺失或无效的已注册设备 Bearer Token；独立只读 Token 不具备设备修改权限
+  /v1/settings/blacklist-rules:
+    get:
+      summary: 列出全部黑名单规则（只读凭据或已注册设备凭据）
+      operationId: listBlacklistRules
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      responses:
+        '200':
+          description: 规则数组，按 created_at 排序
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BlacklistRule'
+        '401':
+          description: 缺失或无效的独立只读 Bearer Token
+        '403':
+          description: 凭据是设备上传 Token 或不具备中央读取权限
+    post:
+      summary: 新增一条黑名单规则（已注册设备凭据）
+      operationId: createBlacklistRule
+      security:
+        - registeredDeviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rule_type, pattern, label]
+              properties:
+                rule_type:
+                  type: string
+                  enum: [app, domain]
+                pattern:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                label:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                enabled:
+                  type: boolean
+                  default: true
+                platform_scope:
+                  type: string
+                  enum: [pc, android, web]
+                  description: 未提供时 app 默认 pc、domain 默认 web
+      responses:
+        '201':
+          description: 规则已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlacklistRule'
+        '400':
+          description: 字段不合法或 (rule_type, platform_scope, normalized_pattern) 已存在
+        '401':
+          description: 缺失或无效的设备凭据
+        '403':
+          description: 凭据不具备管理权限
+  /v1/settings/blacklist-rules/{rule_id}:
+    post:
+      summary: 通过传输兼容方法修改黑名单规则的 label 或 enabled
+      description: 与本路径上的 PATCH 语义完全相同；当部署的 HTTPS 映射拒绝 PATCH 时客户端改用 POST。platform_scope 在创建时设定，不可修改。
+      operationId: updateBlacklistRuleViaPost
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - name: rule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                label:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: 规则已更新
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlacklistRule'
+        '400':
+          description: rule_id 无效或字段不合法
+        '401':
+          description: 缺失或无效的设备凭据
+        '403':
+          description: 凭据不具备管理权限
+        '404':
+          description: 规则不存在
+    patch:
+      summary: 修改黑名单规则的 label 或 enabled（已注册设备凭据）
+      description: platform_scope 在创建时设定，不可通过 PATCH 修改
+      operationId: updateBlacklistRule
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - name: rule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                label:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: 规则已更新
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlacklistRule'
+        '400':
+          description: rule_id 无效或字段不合法
+        '401':
+          description: 缺失或无效的设备凭据
+        '403':
+          description: 凭据不具备管理权限
+        '404':
+          description: 规则不存在
+    delete:
+      summary: 删除一条黑名单规则（Dashboard 凭据）
+      operationId: deleteBlacklistRule
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - name: rule_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: 规则已删除
+        '401':
+          description: 缺失或无效的设备凭据
+        '403':
+          description: 凭据不具备管理权限
+        '404':
+          description: 规则不存在
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-token
+      description: 绑定单个 device_id 的上传 Token，只能调用写入端点，不授予中央读取权限。
+    readBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-read-token
+      description: 独立的中央只读 Token；不得作为设备上传凭据使用。
+    invitationBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-invitation-token
+      description: 短期一次性邀请 Token，只能调用 enrollment claim；服务端仅保存其散列且不得记录明文。
+    aiReaderPairingAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-ai-reader-pairing-token
+      description: Short-lived pairing Token usable only for POST /v1/ai-readers/pairings/claim. Central stores only its cryptographic hash and never logs or returns it.
+    aiReaderAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-ai-reader-access-token
+      description: Long-lived, revocable credential bound to one AI reader. It grants only GET /v1/read/ai/context and is never valid for device, management, or write endpoints.
+    registeredDeviceAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-device-token
+      description: 任一已注册设备凭据（PC 或 Android）。黑名单和共享跨日设置均沿用现有任一已注册设备的读写口径；不区分平台或邀请 scope，不增加新 Token 流程。
+  parameters:
+    ReadFrom:
+      name: from
+      in: query
+      required: true
+      description: 查询窗口起点（包含），必须是带 Z 的 UTC ISO 8601 时间。
+      schema:
+        type: string
+        format: date-time
+    ReadTo:
+      name: to
+      in: query
+      required: true
+      description: 查询窗口终点（排他），必须是带 Z 的 UTC ISO 8601 时间且晚于 from。
+      schema:
+        type: string
+        format: date-time
+    CalendarFrom:
+      name: from
+      in: query
+      required: true
+      description: Inclusive Life Link business date in YYYY-MM-DD form.
+      schema:
+        type: string
+        format: date
+        pattern: '^\d{4}-\d{2}-\d{2}$'
+    CalendarTo:
+      name: to
+      in: query
+      required: true
+      description: Inclusive Life Link business date in YYYY-MM-DD form; the range from from through to contains at most 42 dates.
+      schema:
+        type: string
+        format: date
+        pattern: '^\d{4}-\d{2}-\d{2}$'
+    LocalDeviceId:
+      name: local_device_id
+      in: query
+      required: false
+      description: |
+        可选的当前查看端稳定 device_id，仅用于计算 is_local，既不扩大读取权限，
+        也不筛选响应中的其他设备。未知 ID 会使所有设备 is_local=false。
+      schema:
+        type: string
+    WishId:
+      name: wish_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DeviceId:
+      name: device_id
+      in: path
+      required: true
+      description: 安装生成并保持稳定的中央设备 ID；不是显示名。
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+    BusinessDate:
+      name: business_date
+      in: path
+      required: true
+      description: A date in the target wish's immutable business-day snapshot.
+      schema:
+        type: string
+        format: date
+    TriggerId:
+      name: trigger_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TimelineCategory:
+      name: category
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [wish, trigger, device, user, system]
+    TimelineWishId:
+      name: wish_id
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+    TimelineImportance:
+      name: importance
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [low, normal, high]
+    AIReaderId:
+      name: reader_id
+      in: path
+      required: true
+      description: Central-assigned stable AI reader identifier; never a Token or cursor.
+      schema:
+        type: string
+        format: uuid
+    AIReaderBusinessDate:
+      name: business_date
+      in: query
+      required: false
+      description: Optional Life Link business date. Omission selects the current Asia/Shanghai business day; a cursor must agree with its bound date.
+      schema:
+        type: string
+        format: date
+        pattern: '^\d{4}-\d{2}-\d{2}$'
+    AIReaderCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Central-signed opaque value bound to this reader and its current epoch. Clients must not parse, construct, timestamp, or transfer it to another reader.
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 2048
+    AIReaderUnderstandingVersion:
+      name: understanding_version
+      in: query
+      required: false
+      description: Last AI understanding-guide version held by the caller; exact equality allows content to be omitted with unchanged=true.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 100
+    AIReaderView:
+      name: view
+      in: query
+      required: false
+      description: full keeps the complete structure; compact keeps all event prose but omits event IDs, keys and internal evidence, and renders timestamps in Asia/Shanghai.
+      schema:
+        type: string
+        enum: [full, compact]
+        default: compact
+  schemas:
+    AIReaderIdentity:
+      type: object
+      additionalProperties: false
+      required: [type, instance_id, display_name]
+      properties:
+        type:
+          type: string
+          pattern: '^[a-z][a-z0-9._-]{0,63}$'
+          description: Stable reader implementation kind, not a permission or model name.
+        instance_id:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          description: Stable identifier chosen and persisted by the reader installation.
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        process_identity:
+          $ref: '#/components/schemas/AIReaderProcessIdentity'
+          deprecated: true
+          description: Legacy exact-process-lifetime identity retained for compatibility. New readers use process_binding.
+        process_binding:
+          $ref: '#/components/schemas/AIReaderProcessBinding'
+          description: Optional stable same-machine application binding. Hosted runtimes require both the exact host process name and stable consecutive application path segments.
+    AIReaderProcessBinding:
+      oneOf:
+        - $ref: '#/components/schemas/AIReaderProcessNameBinding'
+        - $ref: '#/components/schemas/AIReaderHostedArgumentBinding'
+    AIReaderProcessNameBinding:
+      type: object
+      additionalProperties: false
+      required: [strategy, display_name, process_name]
+      properties:
+        strategy:
+          const: process-name
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        process_name:
+          type: string
+          pattern: '^[A-Za-z0-9_.-]{1,128}\.exe$'
+    AIReaderHostedArgumentBinding:
+      type: object
+      additionalProperties: false
+      required: [strategy, display_name, process_name, argument_path_segments]
+      properties:
+        strategy:
+          const: hosted-argument
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        process_name:
+          type: string
+          pattern: '^[A-Za-z0-9_.-]{1,128}\.exe$'
+        argument_path_segments:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: string
+            pattern: '^[A-Za-z0-9_.@+-]{1,128}$'
+    AIReaderProcessIdentity:
+      type: object
+      additionalProperties: false
+      required: [executable_path, pid, started_at]
+      properties:
+        executable_path:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Absolute executable path locked at pairing time.
+        pid:
+          type: integer
+          minimum: 1
+        started_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+    AIReaderPairingClaim:
+      type: object
+      additionalProperties: false
+      required: [schema_version, pairing_id, reader]
+      properties:
+        schema_version:
+          type: string
+          const: life-radio-ai-reader-pairing-claim-v1
+        pairing_id:
+          type: string
+          format: uuid
+          description: Must identify the pairing authorized by aiReaderPairingAuth; mismatches return 401 without revealing pairing state.
+        reader:
+          $ref: '#/components/schemas/AIReaderIdentity'
+    AIReaderPairingClaimResponse:
+      type: object
+      additionalProperties: false
+      required: [access_token, reader_id, expires_at, context_url]
+      properties:
+        access_token:
+          type: string
+          minLength: 32
+          maxLength: 4096
+          writeOnly: true
+          description: Returned exactly once after first successful claim. Central stores only a cryptographic hash and cannot recover or list the plaintext.
+        reader_id:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        context_url:
+          type: string
+          format: uri
+          pattern: '/v1/read/ai/context$'
+          description: Canonical absolute URL for the only resource granted to access_token.
+    AIReaderError:
+      type: object
+      additionalProperties: false
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable error code. Implementations may add a more specific code without exposing credential state.
+        message:
+          type: string
+          minLength: 1
+          maxLength: 300
+          description: Safe diagnostic text that never echoes a Token, cursor, pairing text, or personal response content.
+    AIReaderImportanceCounts:
+      type: object
+      additionalProperties: false
+      required: [high, normal, low]
+      properties:
+        high:
+          type: integer
+          minimum: 0
+        normal:
+          type: integer
+          minimum: 0
+        low:
+          type: integer
+          minimum: 0
+    AIReaderUnderstandingResult:
+      type: object
+      additionalProperties: false
+      required: [version, unchanged]
+      properties:
+        version:
+          type: string
+          minLength: 1
+          maxLength: 100
+        unchanged:
+          type: boolean
+        content:
+          $ref: '#/components/schemas/AIUnderstandingGuide'
+      allOf:
+        - if:
+            required: [unchanged]
+            properties:
+              unchanged:
+                const: true
+          then:
+            not:
+              required: [content]
+          else:
+            required: [content]
+      description: content is omitted only when the requested understanding_version exactly matches version; otherwise complete central guidance is required.
+    AIReaderContextResponse:
+      type: object
+      additionalProperties: false
+      required: [understanding, background, events, importance_counts, next_cursor]
+      properties:
+        understanding:
+          $ref: '#/components/schemas/AIReaderUnderstandingResult'
+        background:
+          $ref: '#/components/schemas/AIReaderBackground'
+          description: Full dynamic snapshot on every successful read; only existing include_in_ai=true real-time items are AI-current.
+        events:
+          type: array
+          description: Existing TimelineEvent records after the reader-bound cursor. First read without a cursor returns the selected business day's existing events.
+          items:
+            $ref: '#/components/schemas/TimelineEvent'
+        importance_counts:
+          $ref: '#/components/schemas/AIReaderImportanceCounts'
+        next_cursor:
+          type: string
+          minLength: 16
+          maxLength: 2048
+          description: Newly central-signed opaque cursor bound to the authenticated reader and current epoch, including when events is empty.
+    AIReaderCompactEvent:
+      type: object
+      additionalProperties: false
+      required: [at, importance, text]
+      properties:
+        at:
+          type: string
+          format: date-time
+          pattern: '\+08:00$'
+          description: Event occurrence time rendered in Asia/Shanghai for direct AI reading.
+        importance:
+          type: string
+          enum: [low, normal, high]
+        text:
+          type: string
+          description: Central-prepared human-readable event prose. Reports use the frozen evidence.body.
+    AIReaderCompactUnderstanding:
+      type: object
+      additionalProperties: false
+      required: [version, unchanged]
+      properties:
+        version:
+          type: string
+          minLength: 1
+          maxLength: 100
+        unchanged:
+          type: boolean
+        items:
+          type: array
+          items:
+            type: string
+      allOf:
+        - if:
+            properties:
+              unchanged:
+                const: true
+          then:
+            not:
+              required: [items]
+          else:
+            required: [items]
+    AIReaderCompactContextResponse:
+      type: object
+      additionalProperties: false
+      required: [business_date, timezone, generated_at, generated_at_label, understanding, background, current, events, next_cursor]
+      properties:
+        business_date:
+          type: string
+          format: date
+        timezone:
+          type: string
+          const: Asia/Shanghai
+        generated_at:
+          type: string
+          format: date-time
+          pattern: '\+08:00$'
+        generated_at_label:
+          type: [string, 'null']
+        understanding:
+          $ref: '#/components/schemas/AIReaderCompactUnderstanding'
+        background:
+          type: array
+          items:
+            type: string
+        current:
+          type: array
+          description: Only include_in_ai=true real-time facts, merged by device for brevity.
+          items:
+            type: string
+        events:
+          type: array
+          description: Every selected event remains represented, but event ID, key, evidence, delivery and dedupe metadata are omitted from this compact response only.
+          items:
+            $ref: '#/components/schemas/AIReaderCompactEvent'
+        next_cursor:
+          type: string
+          minLength: 16
+          maxLength: 2048
+    AIReaderContextPreviewResponse:
+      type: object
+      additionalProperties: false
+      required: [preview_only, side_effects, cursor_basis, reader_id, context]
+      properties:
+        preview_only:
+          type: boolean
+          const: true
+        side_effects:
+          type: boolean
+          const: false
+        cursor_basis:
+          type: string
+          const: latest_issued_cursor
+        reader_id:
+          type: string
+          format: uuid
+        context:
+          description: Preview payload. next_cursor is a non-secret explanatory placeholder because this management read never signs or persists a usable cursor.
+          oneOf:
+            - $ref: '#/components/schemas/AIReaderContextResponse'
+            - $ref: '#/components/schemas/AIReaderCompactContextResponse'
+    AIReaderBackground:
+      type: object
+      additionalProperties: false
+      required: [business_date, generated_at, background_summary, real_time_items]
+      properties:
+        business_date:
+          type: string
+          format: date
+        generated_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        generated_at_label:
+          type: string
+        background_summary:
+          $ref: '#/components/schemas/EventBackgroundSummary'
+        real_time_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RealTimeBackgroundItem'
+      description: EventBackgroundResponse without the duplicated ai_understanding guide; the guide is versioned separately in understanding.
+    AIReader:
+      type: object
+      additionalProperties: false
+      required: [reader_id, type, instance_id, display_name, status, created_at, paired_at, token_expires_at, revoked_at, cursor_epoch, last_requested_at, last_requested_position, last_served_at, last_served_position]
+      properties:
+        reader_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        instance_id:
+          type: string
+        display_name:
+          type: string
+        status:
+          type: string
+          enum: [active, expired, revoked]
+        created_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        paired_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        token_expires_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        revoked_at:
+          type: [string, 'null']
+          format: date-time
+        last_requested_at:
+          type: [string, 'null']
+          format: date-time
+        last_served_at:
+          type: [string, 'null']
+          format: date-time
+        cursor_epoch:
+          type: integer
+          minimum: 1
+        last_requested_position:
+          $ref: '#/components/schemas/AIReaderCursorPosition'
+        last_served_position:
+          $ref: '#/components/schemas/AIReaderCursorPosition'
+        process_running:
+          type: [boolean, 'null']
+          description: Runtime checks are provided by the dedicated process-status endpoint; ordinary reader lists return null to avoid spawning OS queries.
+        process_display_name:
+          type: [string, 'null']
+          description: Display label stored with the stable process binding, if configured.
+    AIReaderCursorPosition:
+      type: object
+      additionalProperties: false
+      required: [created_at, timeline_event_id]
+      properties:
+        created_at:
+          type: [string, 'null']
+          format: date-time
+        timeline_event_id:
+          type: [string, 'null']
+          format: uuid
+      description: Human-readable backend position only; it is not a reusable opaque cursor.
+    AIReaderListResponse:
+      type: object
+      additionalProperties: false
+      required: [central_instance_id, readers]
+      properties:
+        central_instance_id:
+          type: string
+        readers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIReader'
+    AIReaderPairingCreateResponse:
+      type: object
+      additionalProperties: false
+      required: [pairing_text, expires_at, central_instance_id]
+      properties:
+        pairing_text:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: Complete machine-readable pairing text including the one-time pairing Token. Never persist it in browser storage or logs.
+        expires_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        central_instance_id:
+          type: string
+    AIReaderAccessLog:
+      type: object
+      additionalProperties: false
+      required: [access_log_id, request_id, requested_at, completed_at, result, cursor_epoch, requested_position, served_position, served_event_ids, served_report_ids, importance_counts, duration_ms]
+      properties:
+        access_log_id:
+          type: string
+          format: uuid
+        request_id:
+          type: string
+          format: uuid
+        result:
+          type: string
+          description: served means central prepared and returned the response; other values are safe request failures and never mean AI read or understood anything.
+        cursor_epoch:
+          type: [integer, 'null']
+          minimum: 1
+          description: Reader progress generation at request time. Timeline served markers only use successful logs from the reader's current generation.
+        requested_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        completed_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        business_date:
+          type: [string, 'null']
+          format: date
+        requested_position:
+          $ref: '#/components/schemas/AIReaderCursorPosition'
+        served_position:
+          $ref: '#/components/schemas/AIReaderCursorPosition'
+        importance_counts:
+          $ref: '#/components/schemas/AIReaderImportanceCounts'
+        served_event_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        served_report_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        background_generated_at:
+          type: [string, 'null']
+          format: date-time
+          pattern: 'Z$'
+        understanding_version:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 100
+        response_hash:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{64}$'
+          description: SHA-256 of the exact served response for audit comparison; the full body is not retained in this access record.
+        response_bytes:
+          type: [integer, 'null']
+          minimum: 0
+        duration_ms:
+          type: integer
+          minimum: 0
+      description: Minimal served-response metadata. It must not store a Token, Authorization, full pairing text, response body, database query, or raw GPS.
+    AIReaderAccessLogListResponse:
+      type: object
+      additionalProperties: false
+      required: [reader_id, logs]
+      properties:
+        reader_id:
+          type: string
+          format: uuid
+        logs:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIReaderAccessLog'
+    ManagedDevice:
+      type: object
+      additionalProperties: false
+      required: [device_id, platform, display_name, reported_name, custom_name, is_current, first_seen_at, last_seen_at]
+      properties:
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        platform:
+          type: string
+          enum: [android, desktop, web]
+        display_name:
+          type: string
+          description: 中央有效名称；custom_name 有值时使用它，否则使用 reported_name。
+        reported_name:
+          type: string
+          description: 客户端最近一次上传的原始设备名称，仅供设备编辑界面辅助辨认。
+        custom_name:
+          type: [string, 'null']
+          description: 用户设置的中央名称；客户端后续上传不得覆盖。
+        is_current:
+          type: boolean
+          description: 使用注册设备凭据读取时标记请求设备；独立只读凭据读取时全部为 false。
+        first_seen_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        last_seen_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+    ManagedDeviceListResponse:
+      type: object
+      additionalProperties: false
+      required: [devices]
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManagedDevice'
+    DeviceNamePatch:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    HealthResponse:
+      type: object
+      required: [status, server_time, api_version]
+      properties:
+        status:
+          type: string
+          const: ok
+        server_time:
+          type: string
+          format: date-time
+        api_version:
+          type: string
+          const: v1
+        device:
+          $ref: '#/components/schemas/Device'
+    HealthInfoResponse:
+      type: object
+      additionalProperties: false
+      required: [date, timezone, sleep, steps]
+      properties:
+        date:
+          type: string
+          format: date
+        timezone:
+          type: string
+          const: Asia/Shanghai
+        sleep:
+          $ref: '#/components/schemas/SleepReference'
+        steps:
+          $ref: '#/components/schemas/StepsSummary'
+    SleepReference:
+      type: object
+      additionalProperties: false
+      required: [status, window_start, window_end, estimated_start, estimated_end, finalized_at, interval_seconds, rest_seconds, interruption_seconds, last_activity_at, first_activity_at, last_activity_devices, first_activity_devices, last_activity_apps, first_activity_apps, contributing_device_ids, warnings]
+      properties:
+        status:
+          type: string
+          enum: [estimating, final, insufficient_data]
+        window_start:
+          type: string
+          format: date-time
+        window_end:
+          type: string
+          format: date-time
+          description: 当前夜晚尚未结束时截断到中央当前时间。
+        estimated_start:
+          type: [string, 'null']
+          format: date-time
+        estimated_end:
+          type: [string, 'null']
+          format: date-time
+        finalized_at:
+          type: [string, 'null']
+          format: date-time
+          description: 当前候选由醒后最早真实使用闭合的发生时刻；与 estimated_end 相同，不是查询、入库或中午时刻。
+        interval_seconds:
+          type: [integer, 'null']
+          minimum: 0
+          description: estimated_end 与 estimated_start 的区间跨度，包含短暂中断。
+        rest_seconds:
+          type: [integer, 'null']
+          minimum: 0
+        interruption_seconds:
+          type: [integer, 'null']
+          minimum: 0
+        last_activity_at:
+          type: [string, 'null']
+          format: date-time
+        first_activity_at:
+          type: [string, 'null']
+          format: date-time
+        last_activity_devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/HealthDeviceReference'
+        first_activity_devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/HealthDeviceReference'
+        last_activity_apps:
+          type: array
+          description: 睡眠候选开始边界处最后结束的应用；同一时刻存在重叠证据时可返回多项。
+          items:
+            $ref: '#/components/schemas/HealthActivityReference'
+        first_activity_apps:
+          type: array
+          description: 睡眠候选结束边界处最先开始的应用；同一时刻存在重叠证据时可返回多项。
+          items:
+            $ref: '#/components/schemas/HealthActivityReference'
+        contributing_device_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        warnings:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+    HealthDeviceReference:
+      type: object
+      additionalProperties: false
+      required: [device_id, display_name, platform]
+      properties:
+        device_id:
+          type: string
+        display_name:
+          type: string
+        platform:
+          type: string
+          enum: [android, desktop, web]
+    HealthActivityReference:
+      type: object
+      additionalProperties: false
+      required: [device_id, device_display_name, platform, app_name]
+      properties:
+        device_id:
+          type: string
+        device_display_name:
+          type: string
+        platform:
+          type: string
+          enum: [android, desktop, web]
+        app_name:
+          type: string
+    StepsSummary:
+      type: object
+      additionalProperties: false
+      required: [devices]
+      properties:
+        devices:
+          type: array
+          description: 不跨设备求和；每台 Android 设备独立返回。
+          items:
+            $ref: '#/components/schemas/StepDeviceSummary'
+    StepDeviceSummary:
+      type: object
+      additionalProperties: false
+      required: [device_id, display_name, status, steps, hourly_steps, sample_count, first_sample_at, last_sample_at, warnings]
+      properties:
+        device_id:
+          type: string
+        display_name:
+          type: string
+        status:
+          type: string
+          enum: [available, insufficient_samples]
+        steps:
+          type: [integer, 'null']
+          minimum: 0
+        hourly_steps:
+          type: array
+          description: >
+            Asia/Shanghai 自然日的 24 项步数分布，索引 0 至 23 分别对应本地小时。
+            同 device_id 中相邻且 counter_session_id 相同的有效非负差值全部归入后一个观察所在小时；
+            即使跨多个小时也不拆分。available 时其和严格等于 steps；
+            insufficient_samples 时固定为 24 个 0，steps 为 null。
+          minItems: 24
+          maxItems: 24
+          items:
+            type: integer
+            minimum: 0
+        sample_count:
+          type: integer
+          minimum: 1
+        first_sample_at:
+          type: [string, 'null']
+          format: date-time
+        last_sample_at:
+          type: [string, 'null']
+          format: date-time
+        warnings:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+    StepsObservationPayload:
+      type: object
+      additionalProperties: false
+      required: [counter_value, counter_session_id, sensor_type]
+      properties:
+        counter_value:
+          type: integer
+          minimum: 0
+          description: Android TYPE_STEP_COUNTER 在当前计数会话中的累计值。
+        counter_session_id:
+          type: string
+          format: uuid
+          description: 设备重启、传感器重置或累计值下降时更换。
+        sensor_type:
+          type: string
+          const: android.step_counter
+    EnrollmentDevice:
+      oneOf:
+        - $ref: '#/components/schemas/EnrollmentDesktopDevice'
+        - $ref: '#/components/schemas/EnrollmentAndroidDevice'
+      description: >
+        设备平台必须与 installation ID 格式匹配；device_id 不能取自显示名、包名、
+        hostname、手机号、IMEI 或 MAC 地址。
+    EnrollmentDesktopDevice:
+      type: object
+      additionalProperties: false
+      required: [device_id, platform, display_name]
+      properties:
+        device_id:
+          type: string
+          pattern: '^desktop-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          description: 当前 PC 本地已经持久化的 installation ID。
+        platform:
+          type: string
+          const: desktop
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    EnrollmentAndroidDevice:
+      type: object
+      additionalProperties: false
+      required: [device_id, platform, display_name]
+      properties:
+        device_id:
+          type: string
+          pattern: '^android-install-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          description: Android SettingsStore 首次安装生成并持久化的 installation ID。
+        platform:
+          type: string
+          const: android
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    EnrollmentClaim:
+      type: object
+      additionalProperties: false
+      required: [schema_version, invitation_id, device]
+      properties:
+        schema_version:
+          type: string
+          const: life-radio-enrollment-claim-v1
+        invitation_id:
+          type: string
+          format: uuid
+          description: 必须与 Authorization Bearer invitation_token 所属邀请一致。
+        device:
+          $ref: '#/components/schemas/EnrollmentDevice'
+    LifeRadioClientProfile:
+      type: object
+      additionalProperties: false
+      required: [schema_version, central_base_url, device, upload_token, issued_at]
+      properties:
+        schema_version:
+          type: string
+          const: life-radio-client-profile-v1
+        central_base_url:
+          type: string
+          format: uri
+          pattern: '^https://[^\s?#]+(?:/[^\s?#]*)?$'
+        device:
+          $ref: '#/components/schemas/EnrollmentDevice'
+        upload_token:
+          type: string
+          minLength: 32
+          pattern: '^\S+$'
+          writeOnly: true
+          description: 绑定该 device_id 的永久设备上传 Token。
+        read_token:
+          type: string
+          minLength: 32
+          pattern: '^\S+$'
+          writeOnly: true
+          description: 可选的全部中央数据只读 Token；upload scope 必须省略。
+        issued_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+    SharedSettingsSnapshot:
+      type: object
+      additionalProperties: false
+      required: [timezone, day_start_hour, settings_version]
+      properties:
+        timezone:
+          type: string
+          const: Asia/Shanghai
+        day_start_hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+        settings_version:
+          type: integer
+          minimum: 1
+      description: Immutable snapshot stored when a wish is created; later shared-settings changes do not move its days.
+    WishCreate:
+      type: object
+      additionalProperties: false
+      required: [request_id, text]
+      properties:
+        request_id:
+          type: string
+          format: uuid
+          description: Client-generated idempotency key. Retrying the same request_id and normalized body returns the original central final record; a different body returns 409 idempotency_conflict.
+        text:
+          type: string
+          minLength: 1
+          maxLength: 30
+          description: The central service trims leading and trailing whitespace before enforcing the Unicode character limit.
+        duration_days:
+          type: integer
+          enum: [3, 7]
+          default: 3
+        ai_tracking_enabled:
+          type: boolean
+          default: false
+          description: Stored user preference only; this version defines no AI invocation, delivery cursor, or read receipt.
+    WishDayAssessment:
+      type: object
+      additionalProperties: false
+      required: [evaluation]
+      properties:
+        evaluation:
+          type: string
+          enum: [completed, not_completed]
+    WishTextPatch:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 30
+          description: The only mutable wish field. The central service trims leading and trailing whitespace before enforcing the Unicode character limit. The text mutation never changes dates, daily results, snapshots, trigger configuration, or timeline history; existing due-wish lazy finalization still applies before the write.
+    WishDay:
+      type: object
+      additionalProperties: false
+      required: [business_date, evaluation, evaluation_source, evaluated_at, revision]
+      properties:
+        business_date:
+          type: string
+          format: date
+        evaluation:
+          type: [string, 'null']
+          enum: [completed, not_completed, null]
+        evaluation_source:
+          type: [string, 'null']
+          enum: [manual, automatic, null]
+        evaluated_at:
+          type: [string, 'null']
+          format: date-time
+          pattern: 'Z$'
+        revision:
+          type: integer
+          minimum: 0
+          description: Incremented for a historical manual revision; a revision appends a new timeline event instead of replacing old events.
+    Wish:
+      type: object
+      additionalProperties: false
+      required: [wish_id, text, duration_days, status, created_at, starts_on, ends_on, business_day_snapshot, ai_tracking_enabled, wish_days]
+      properties:
+        wish_id:
+          type: string
+          format: uuid
+        text:
+          type: string
+          minLength: 1
+          maxLength: 30
+        duration_days:
+          type: integer
+          enum: [3, 7]
+        status:
+          type: string
+          enum: [active, cancelled, archived]
+        created_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        starts_on:
+          type: string
+          format: date
+          description: First fixed wish day. For newly created wishes this is the creation business day; existing persisted wishes retain their original fixed date.
+        ends_on:
+          type: string
+          format: date
+        business_day_snapshot:
+          $ref: '#/components/schemas/SharedSettingsSnapshot'
+        ai_tracking_enabled:
+          type: boolean
+        cancelled_at:
+          type: [string, 'null']
+          format: date-time
+          pattern: 'Z$'
+        archived_at:
+          type: [string, 'null']
+          format: date-time
+          pattern: 'Z$'
+        completed_days:
+          type: integer
+          minimum: 0
+          maximum: 7
+        wish_days:
+          type: array
+          minItems: 3
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/WishDay'
+          description: Created once with exactly duration_days fixed consecutive business dates; never regenerated after settings changes.
+      description: >-
+        Central owns lifecycle finalization. After the final wish business day ends under
+        business_day_snapshot, a registered device may explicitly complete the wish once all
+        fixed days are assessed; central then appends exactly one wish.period_completed event
+        and archives it. If the user does not complete it, a 72-hour grace period applies and
+        relevant wish reads or writes perform an idempotent lazy finalize: every remaining null
+        evaluation becomes not_completed/automatic, the same single completion event is appended,
+        and the wish is archived. Clients may decide when to show the action from the immutable
+        snapshot, but never authoritatively archive state themselves; wish lifecycle finalization
+        remains lazy and is not performed by the v1.13 minute scheduler.
+    WishListResponse:
+      type: object
+      additionalProperties: false
+      required: [wishes]
+      properties:
+        wishes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Wish'
+    TimelineEvent:
+      type: object
+      additionalProperties: false
+      required: [timeline_event_id, occurred_at, created_at, event_key, category, importance, title, source_kind, subject, evidence, dedupe_key]
+      properties:
+        timeline_event_id:
+          type: string
+          format: uuid
+        occurred_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        created_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        event_key:
+          type: string
+          minLength: 1
+          maxLength: 120
+        category:
+          type: string
+          enum: [wish, trigger, device, user, system]
+        importance:
+          type: string
+          enum: [low, normal, high]
+        title:
+          type: string
+          maxLength: 120
+        detail:
+          type: [string, 'null']
+          maxLength: 500
+        source_kind:
+          type: string
+          enum: [device, user, central]
+        source_device_id:
+          type: [string, 'null']
+        device_display_name:
+          type: [string, 'null']
+          description: |
+            读取时按稳定设备 ID 动态解析的当前中央名称。设备改名不会改写时间线原始行；
+            对中央已知的设备用量里程碑，title 也按此当前名称动态投影。
+        wish_id:
+          type: [string, 'null']
+          format: uuid
+        trigger_id:
+          type: [string, 'null']
+          format: uuid
+        subject:
+          type: object
+          additionalProperties: true
+        evidence:
+          type: object
+          additionalProperties: true
+          description: For v1.13 system milestones and reports, conforms to SystemMilestoneEvidence or ReportEventEvidence according to event_key; older append-only events retain their existing evidence shape.
+        statistics_window:
+          oneOf:
+            - $ref: '#/components/schemas/BusinessStatisticsWindow'
+            - type: 'null'
+          description: Present for generated reports and any event whose evidence is calculated for a bounded business-day window.
+        delivery:
+          oneOf:
+            - $ref: '#/components/schemas/AIDeliveryState'
+            - type: 'null'
+          description: Optional display-only delivery attachment for report events. It is updated on the same timeline event and never creates a second event; it contains no credentials, provider, model, retry queue, or consumer cursor.
+        dedupe_key:
+          type: string
+          minLength: 1
+          maxLength: 300
+          description: Stable central unique key. Recalculation, retries, and restarts must not create another timeline event with the same key.
+        ai_reader:
+          $ref: '#/components/schemas/TimelineAIReaderState'
+          description: Present on the registered-device/read-token timeline endpoint as a dynamic WebUI marker; omitted from AI reader context responses.
+      description: Append-only user timeline. Wish lifecycle events include wish.created, wish.cancelled, wish.period_completed, and wish.result_revised; central assigns a distinct stable dedupe_key for each logical create, cancellation, finalize, or revision action and never overwrites an existing event. v1.13 central-generated event_key values include system.device_usage_milestone, system.blacklist_usage_milestone, system.location_stay_milestone, system.activity_duration_milestone, system.late_online_check, wish.scheduled_reminder, report.morning, report.evening, and report.periodic. System milestone rules are fixed central rules, not user-creatable event-trigger types. Wish reminder titles start with 心愿提醒·. v1.15 adds system.ai_reader_connected and system.ai_reader_context_served as low-priority audit events. v1.15.1 excludes every importance=low event from AI reader responses; these events remain visible to the user and always have ai_reader.state=not_applicable.
+    TimelineAIReaderState:
+      type: object
+      additionalProperties: false
+      required: [state, reader_id, reader_display_name]
+      properties:
+        state:
+          type: string
+          enum: [served, not_served, not_applicable]
+          description: served means the most recently paired active reader's current cursor generation successfully included this event; it never proves reading or understanding.
+        reader_id:
+          type: [string, 'null']
+          format: uuid
+        reader_display_name:
+          type: [string, 'null']
+    TimelineEventListResponse:
+      type: object
+      additionalProperties: false
+      required: [window, events]
+      properties:
+        window:
+          $ref: '#/components/schemas/ReadWindow'
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimelineEvent'
+    CalendarDaysResponse:
+      type: object
+      additionalProperties: false
+      required: [timezone, day_start_hour, today_business_date, earliest_available_date, latest_available_date, days]
+      properties:
+        timezone:
+          type: string
+          enum: [Asia/Shanghai]
+        day_start_hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+        today_business_date:
+          type: string
+          format: date
+        earliest_available_date:
+          type: [string, 'null']
+          format: date
+        latest_available_date:
+          type: [string, 'null']
+          format: date
+        days:
+          type: array
+          minItems: 1
+          maxItems: 42
+          items:
+            $ref: '#/components/schemas/CalendarDay'
+    CalendarDay:
+      type: object
+      additionalProperties: false
+      required: [business_date, available, total_bytes, modules]
+      properties:
+        business_date:
+          type: string
+          format: date
+        available:
+          type: boolean
+        total_bytes:
+          type: integer
+          minimum: 0
+        modules:
+          $ref: '#/components/schemas/CalendarDayModules'
+    CalendarDayModules:
+      type: object
+      additionalProperties: false
+      required: [usage, location, health, timeline, other]
+      properties:
+        usage:
+          $ref: '#/components/schemas/CalendarModuleSize'
+        location:
+          $ref: '#/components/schemas/CalendarModuleSize'
+        health:
+          $ref: '#/components/schemas/CalendarModuleSize'
+        timeline:
+          $ref: '#/components/schemas/CalendarModuleSize'
+        other:
+          $ref: '#/components/schemas/CalendarModuleSize'
+    CalendarModuleSize:
+      type: object
+      additionalProperties: false
+      required: [bytes, records]
+      properties:
+        bytes:
+          type: integer
+          minimum: 0
+        records:
+          type: integer
+          minimum: 0
+    EventBackgroundResponse:
+      type: object
+      additionalProperties: false
+      required: [business_date, generated_at, background_summary, ai_understanding, real_time_items]
+      properties:
+        business_date:
+          type: string
+          format: date
+          description: Requested Life Link business date in the fixed Asia/Shanghai setting.
+        generated_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        background_summary:
+          $ref: '#/components/schemas/EventBackgroundSummary'
+        ai_understanding:
+          $ref: '#/components/schemas/AIUnderstandingGuide'
+        real_time_items:
+          type: array
+          description: Latest background facts for display. Device-online and current-app items include only devices still fresh within 15 minutes and are ordered as a device followed by its fresh app; offline devices and their old apps are omitted. Location/activity may remain as stale last-known context. include_in_ai is true only for fresh items.
+          items:
+            $ref: '#/components/schemas/RealTimeBackgroundItem'
+    EventBackgroundSummary:
+      type: object
+      additionalProperties: false
+      required: [wish, device_and_apps, blacklist, location_and_activity]
+      properties:
+        wish:
+          $ref: '#/components/schemas/EventBackgroundSection'
+        device_and_apps:
+          $ref: '#/components/schemas/EventBackgroundSection'
+        blacklist:
+          $ref: '#/components/schemas/EventBackgroundSection'
+        location_and_activity:
+          $ref: '#/components/schemas/EventBackgroundSection'
+          description: Includes classified activity intervals overlapping the trailing 60 minutes at generated_at. An interval crossing the cutoff is returned with its complete original start, end, and duration rather than clipped to the display window.
+        device_usage_seconds:
+          type: integer
+          minimum: 0
+          description: Current-business-day all-device usage after the existing PC AFK clipping rule.
+        blacklist_usage_seconds:
+          type: integer
+          minimum: 0
+          description: Current-business-day all-platform blacklist usage after existing platform-scoped matching.
+    EventBackgroundSection:
+      type: object
+      additionalProperties: false
+      required: [title, items]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Central-generated display heading; clients must not translate it into a different statistical claim.
+        items:
+          type: array
+          description: Central-generated normalized display entries for this section. An empty list means the section has no current-business-day facts and is omitted from prose reports rather than filled with a client-generated 'none'.
+          items:
+            $ref: '#/components/schemas/GeneratedTextItem'
+    GeneratedTextItem:
+      type: object
+      additionalProperties: false
+      required: [item_key, text]
+      properties:
+        item_key:
+          type: string
+          minLength: 1
+          maxLength: 120
+        text:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Canonical central-generated Chinese display text; WebUI and AI may show it directly and must not infer unrecorded causes or motivations.
+    AIUnderstandingGuide:
+      type: object
+      additionalProperties: false
+      required: [title, items, timezone, real_time_valid_for_minutes]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Central-generated stable-concepts heading for the AI understanding panel.
+        items:
+          type: array
+          minItems: 1
+          description: Stable central explanations of business-day boundaries, device usage/AFK, platform-scoped blacklist matching, location/activity derivation, and real-time freshness. Reports refer here rather than restating the definitions.
+          items:
+            $ref: '#/components/schemas/GeneratedTextItem'
+        timezone:
+          type: string
+          const: Asia/Shanghai
+        real_time_valid_for_minutes:
+          type: integer
+          const: 15
+          description: >-
+            Stable interpretation guidance: only include_in_ai=true real-time facts may enter an
+            AI background; absence does not imply that a device is offline.
+    RealTimeBackgroundItem:
+      type: object
+      additionalProperties: false
+      required: [kind, observed_at, is_stale, include_in_ai]
+      properties:
+        kind:
+          type: string
+          enum: [device_online, current_app, current_activity, current_location]
+        observed_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        is_stale:
+          type: boolean
+          description: True when observed_at is more than 15 minutes before generated_at. WebUI keeps this latest state and explicitly renders its observed_at instead of treating it as current.
+        include_in_ai:
+          type: boolean
+          description: True only while is_stale=false. AI background generation excludes entries with false; the endpoint retains them for WebUI history/context.
+        device_id:
+          type: [string, 'null']
+        display_text:
+          type: [string, 'null']
+          maxLength: 500
+    BusinessStatisticsWindow:
+      type: object
+      additionalProperties: false
+      required: [business_date, from, to]
+      properties:
+        business_date:
+          type: string
+          format: date
+          description: Life Link business date under the immutable Asia/Shanghai shared setting, rather than a UTC or natural-date label.
+        from:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+          description: Inclusive UTC start of the statistics window.
+        to:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+          description: Exclusive UTC end of the statistics window.
+    SystemMilestoneEvidence:
+      type: object
+      additionalProperties: true
+      required: [rule, threshold_minutes, business_date]
+      properties:
+        rule:
+          type: string
+          enum: [device_usage_hourly, blacklist_usage_half_hourly, location_stay_hourly, activity_duration_half_hourly, late_online_half_hourly, late_online_hourly]
+        threshold_minutes:
+          type: integer
+          minimum: 30
+          description: >-
+            The reached fixed checkpoint: device/location use 60-minute steps;
+            blacklist/activity/late-online use 30-minute steps. late_online_hourly remains
+            readable only for older events.
+        business_date:
+          type: string
+          format: date
+        aggregate_scope:
+          type: [string, 'null']
+          enum: [all_devices, all_platforms, null]
+          description: Device-usage milestones are per-device and therefore use null plus device_id; all_platforms is required evidence for blacklist milestones after existing platform-scoped matching. all_devices remains readable only for older v1.13.0 events.
+        aggregate_usage_seconds:
+          type: [integer, 'null']
+          minimum: 0
+          description: Per-device usage for device milestones, or all-platform usage for blacklist milestones. This remains evidence rather than a new raw event.
+        device_id:
+          type: [string, 'null']
+        stable_place_id:
+          type: [string, 'null']
+        activity_state:
+          type: [string, 'null']
+          enum: [walking, running, transport, null]
+        online_device_ids:
+          type: array
+          items:
+            type: string
+          description: >-
+            Required evidence for late_online_half_hourly: IDs of devices with a verifiable
+            fact or heartbeat within the preceding 15 minutes. This is an online-at-checkpoint
+            test, never foreground-use duration or accumulated usage. Older events may use
+            late_online_hourly with the same evidence meaning.
+    ReportEventEvidence:
+      type: object
+      additionalProperties: true
+      required: [report_kind, business_date, statistics_window, body]
+      properties:
+        report_kind:
+          type: string
+          enum: [morning, evening, periodic]
+        business_date:
+          type: string
+          format: date
+        statistics_window:
+          $ref: '#/components/schemas/BusinessStatisticsWindow'
+        periodic_minutes:
+          type: [integer, 'null']
+          enum: [30, 60, 120, 180, 240, null]
+          description: Required for report.periodic and null for morning or evening reports.
+        body:
+          type: string
+          minLength: 1
+          description: Frozen central-generated report prose. AI readers consume evidence.body and must not substitute TimelineEvent.delivery display state or regenerate another report body.
+    AIDeliveryState:
+      type: object
+      additionalProperties: false
+      required: [state, target_display_name, updated_at]
+      properties:
+        state:
+          type: string
+          enum: [pending, sent, not_configured, failed]
+          description: v1.13 central generation uses not_configured only. The other values reserve display semantics for a future separately-approved delivery implementation.
+        target_display_name:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Snapshot of the user-visible AI name at report scheduling time; later shared-setting edits do not rewrite history.
+        updated_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+    TriggerParameters:
+      oneOf:
+        - $ref: '#/components/schemas/BlacklistUsageMilestoneParameters'
+        - $ref: '#/components/schemas/DeviceUsageMilestoneParameters'
+        - $ref: '#/components/schemas/LateUsageMilestoneParameters'
+        - $ref: '#/components/schemas/ScheduledReminderParameters'
+    BlacklistUsageMilestoneParameters:
+      type: object
+      additionalProperties: false
+      required: [platform_scope]
+      properties:
+        platform_scope:
+          type: string
+          enum: [all, pc, android, web]
+          description: all 汇总各自完成平台隔离匹配后的 PC 应用、Android 应用和网站黑名单用量；它不会使单条黑名单规则跨平台命中。客户端默认使用 all。
+    DeviceUsageMilestoneParameters:
+      type: object
+      additionalProperties: false
+      required: [device_id]
+      properties:
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+    LateUsageMilestoneParameters:
+      type: object
+      additionalProperties: false
+      required: [device_id, start_local_time]
+      properties:
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Registered device ID. The reserved value all means any device and is the client default for late-usage triggers.
+        start_local_time:
+          type: string
+          pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: Local clock time in the trigger business-day snapshot; it may cross a natural-date boundary.
+    ScheduledReminderParameters:
+      type: object
+      additionalProperties: false
+      required: [reminder_local_time]
+      properties:
+        reminder_local_time:
+          type: string
+          pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: Local clock time in the associated wish's immutable business-day snapshot. Central does not backfill a reminder missed by more than 15 minutes.
+    TriggerTypeCatalogItem:
+      type: object
+      additionalProperties: false
+      required: [trigger_type, display_name, config_version, target_scopes, interval_minutes, parameters_schema]
+      properties:
+        trigger_type:
+          type: string
+          enum: [blacklist_usage_milestone, device_usage_milestone, late_usage_milestone, scheduled_reminder]
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        config_version:
+          type: integer
+          const: 1
+        target_scopes:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [global, wish]
+        interval_minutes:
+          type: object
+          additionalProperties: false
+          required: [minimum, allowed_values]
+          properties:
+            minimum:
+              type: integer
+              minimum: 1
+            allowed_values:
+              type: array
+              minItems: 1
+              items:
+                type: integer
+                minimum: 1
+        parameters_schema:
+          type: object
+          additionalProperties: true
+          description: JSON Schema-like catalog entry for the matching strict parameter object; clients must not invent fields.
+    TriggerTypeCatalogResponse:
+      type: object
+      additionalProperties: false
+      required: [trigger_types]
+      properties:
+        trigger_types:
+          type: array
+          minItems: 3
+          items:
+            $ref: '#/components/schemas/TriggerTypeCatalogItem'
+    EventTriggerCreate:
+      type: object
+      additionalProperties: false
+      required: [request_id, trigger_type, config_version, parameters, interval_minutes]
+      properties:
+        request_id:
+          type: string
+          format: uuid
+          description: Client-generated idempotency key. Retrying the same request_id and normalized body returns the original central final record; a different body returns 409 idempotency_conflict.
+        wish_id:
+          type: [string, 'null']
+          format: uuid
+          description: Optional association. A non-null wish_id must reference a status=active wish at creation time.
+        trigger_type:
+          type: string
+          enum: [blacklist_usage_milestone, device_usage_milestone, late_usage_milestone, scheduled_reminder]
+        config_version:
+          type: integer
+          const: 1
+        parameters:
+          $ref: '#/components/schemas/TriggerParameters'
+        interval_minutes:
+          type: integer
+          minimum: 1
+        enabled:
+          type: boolean
+          default: true
+    EventTriggerPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        wish_id:
+          type: [string, 'null']
+          format: uuid
+          description: A new non-null association must reference a status=active wish. After an associated wish is cancelled or normally archived, the association and configuration are immutable and the trigger cannot be re-enabled.
+        parameters:
+          $ref: '#/components/schemas/TriggerParameters'
+        interval_minutes:
+          type: integer
+          minimum: 1
+        enabled:
+          type: boolean
+    EventTrigger:
+      type: object
+      additionalProperties: false
+      required: [trigger_id, wish_id, trigger_type, config_version, parameters, interval_minutes, enabled, created_at, updated_at, last_triggered_at]
+      properties:
+        trigger_id:
+          type: string
+          format: uuid
+        wish_id:
+          type: [string, 'null']
+          format: uuid
+          description: When this associated wish is cancelled or reaches normal 72-hour finalization, central atomically sets enabled=false in the same transaction and retains this trigger record. It cannot later be re-enabled or reconfigured, but may still be deleted.
+        trigger_type:
+          type: string
+          enum: [blacklist_usage_milestone, device_usage_milestone, late_usage_milestone, scheduled_reminder]
+        config_version:
+          type: integer
+          const: 1
+        parameters:
+          $ref: '#/components/schemas/TriggerParameters'
+        interval_minutes:
+          type: integer
+          minimum: 1
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        updated_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+        last_triggered_at:
+          type: [string, 'null']
+          format: date-time
+          pattern: 'Z$'
+    EventTriggerListResponse:
+      type: object
+      additionalProperties: false
+      required: [triggers]
+      properties:
+        triggers:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventTrigger'
+    MorningReportSchedule:
+      type: object
+      additionalProperties: false
+      required: [enabled, mode, delay_minutes, local_time]
+      default: {enabled: false, mode: after_first_usage, delay_minutes: 60, local_time: null}
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        mode:
+          type: string
+          enum: [after_first_usage, fixed_time]
+        delay_minutes:
+          type: integer
+          minimum: 1
+          maximum: 720
+          default: 60
+          description: Used only when mode=after_first_usage; default is 60 minutes after the first real current-business-day usage.
+        local_time:
+          type: [string, 'null']
+          pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: Required when mode=fixed_time and null when mode=after_first_usage.
+    FixedTimeReportSchedule:
+      type: object
+      additionalProperties: false
+      required: [enabled, local_time]
+      default: {enabled: false, local_time: '23:00'}
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        local_time:
+          type: string
+          pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'
+    PeriodicSummarySchedule:
+      type: object
+      additionalProperties: false
+      required: [enabled, start_local_time, end_local_time, interval_minutes]
+      default: {enabled: false, start_local_time: '10:00', end_local_time: '22:00', interval_minutes: 120}
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        start_local_time:
+          type: string
+          pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'
+        end_local_time:
+          type: string
+          pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'
+        interval_minutes:
+          type: integer
+          enum: [30, 60, 120, 180, 240]
+          description: The complete and only allowed periodic-summary cadence list. The local-time range may cross a natural-date boundary but never causes a report to read outside its business day.
+    SharedSettings:
+      type: object
+      additionalProperties: false
+      required: [timezone, day_start_hour, primary_health_device_id, sleep_local_time, ai_display_name, morning_report, evening_report, periodic_summary, settings_version, updated_at]
+      properties:
+        timezone:
+          type: string
+          const: Asia/Shanghai
+          description: 第一阶段固定的 IANA 时区，客户端不得修改。
+        day_start_hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+          description: 业务日的本地起始整点小时。
+        primary_health_device_id:
+          type: [string, 'null']
+          description: 用户选择的主健康 Android 设备；null 时由中央按当前窗口证据量自动选择。
+        sleep_local_time:
+          type: string
+          pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'
+          default: '23:00'
+          description: Shared local clock time for the fixed late-online system check and the related wish reminder condition. Existing central stores missing this setting must migrate to 23:00.
+        ai_display_name:
+          type: string
+          minLength: 1
+          maxLength: 80
+          default: AI
+          description: Read-only projection of the most recently paired active AI reader display_name, or AI when none is active. Clients cannot set it; scheduled reports snapshot the projected name into their delivery attachment.
+        morning_report:
+          $ref: '#/components/schemas/MorningReportSchedule'
+        evening_report:
+          $ref: '#/components/schemas/FixedTimeReportSchedule'
+        periodic_summary:
+          $ref: '#/components/schemas/PeriodicSummarySchedule'
+        settings_version:
+          type: integer
+          minimum: 1
+          description: 初始为 1；任一共享设置实际变化时递增。与当前值完全相同的重写保持 settings_version 和 updated_at 不变。
+        updated_at:
+          type: string
+          format: date-time
+          pattern: 'Z$'
+          description: 最近一次实际变更的 UTC RFC3339 时间。
+    SharedSettingsPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        day_start_hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+          description: boolean、字符串、小数和越界值均被拒绝。
+        primary_health_device_id:
+          type: [string, 'null']
+          minLength: 1
+          description: 必须是当前未删除的 Android 设备；null 恢复自动选择。
+        sleep_local_time:
+          type: string
+          pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'
+        morning_report:
+          $ref: '#/components/schemas/MorningReportSchedule'
+        evening_report:
+          $ref: '#/components/schemas/FixedTimeReportSchedule'
+        periodic_summary:
+          $ref: '#/components/schemas/PeriodicSummarySchedule'
+    ActivityDeviceCandidate:
+      type: object
+      additionalProperties: false
+      required: [device_id, display_name, step_sample_count, location_observation_count, evidence_count]
+      properties:
+        device_id: {type: string}
+        display_name: {type: string}
+        step_sample_count: {type: integer, minimum: 0}
+        location_observation_count: {type: integer, minimum: 0}
+        evidence_count: {type: integer, minimum: 0}
+    ActivityInterval:
+      type: object
+      additionalProperties: false
+      required: [start_at, end_at, state, duration_seconds, steps, distance_m, distance_source, confidence, is_current, address, latitude, longitude]
+      properties:
+        start_at: {type: string, format: date-time, pattern: 'Z$'}
+        end_at: {type: string, format: date-time, pattern: 'Z$'}
+        state: {type: string, enum: [stationary, walking, running, transport]}
+        duration_seconds: {type: integer, minimum: 60}
+        steps: {type: integer, minimum: 0}
+        distance_m: {type: number, minimum: 0}
+        distance_source: {type: string, enum: [none, gps, gps_or_steps_max]}
+        confidence: {type: string, enum: [medium, high]}
+        is_current: {type: boolean}
+        address:
+          type: [string, 'null']
+          description: 区间内最接近时间中点的定位地址；无区间内定位时仅允许采用距边界十分钟内的邻近点，否则为 null。
+        latitude:
+          type: [number, 'null']
+          minimum: -90
+          maximum: 90
+          description: 与 address 对应的代表定位点纬度。
+        longitude:
+          type: [number, 'null']
+          minimum: -180
+          maximum: 180
+          description: 与 address 对应的代表定位点经度。
+    ActivityStateProjection:
+      type: object
+      additionalProperties: false
+      required: [primary_device_id, selection_source, devices, current, updated_at, intervals]
+      properties:
+        primary_device_id: {type: [string, 'null']}
+        selection_source: {type: string, enum: [configured, automatic, unavailable]}
+        devices:
+          type: array
+          items: {$ref: '#/components/schemas/ActivityDeviceCandidate'}
+        current:
+          oneOf:
+            - {$ref: '#/components/schemas/ActivityInterval'}
+            - {type: 'null'}
+        updated_at: {type: [string, 'null'], format: date-time}
+        intervals:
+          type: array
+          items: {$ref: '#/components/schemas/ActivityInterval'}
+    ReadLocationsResponse:
+      type: object
+      required: [from, to, window, generated_at, timezone, devices, observations, segments, activity_state]
+      properties:
+        from: {type: string, format: date-time, pattern: 'Z$'}
+        to: {type: string, format: date-time, pattern: 'Z$'}
+        window: {type: object}
+        generated_at: {type: string, format: date-time, pattern: 'Z$'}
+        timezone: {type: string, const: Asia/Shanghai}
+        devices: {type: array}
+        observations: {type: array}
+        segments: {type: array}
+        activity_state: {$ref: '#/components/schemas/ActivityStateProjection'}
+    EventBatch:
+      type: object
+      required: [schema_version, batch_id, device, sent_at, events]
+      properties:
+        schema_version:
+          type: string
+          const: v1
+        batch_id:
+          type: string
+          format: uuid
+        device:
+          $ref: '#/components/schemas/Device'
+        sent_at:
+          type: string
+          format: date-time
+        events:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/ContextEvent'
+    Device:
+      type: object
+      required: [device_id, platform]
+      properties:
+        device_id:
+          type: string
+          description: 安装生成的稳定匿名 ID；不可使用手机号码、IMEI 或 MAC 地址。
+        platform:
+          type: string
+          enum: [android, desktop, web]
+        display_name:
+          type: string
+          maxLength: 100
+    ReadWindow:
+      type: object
+      required: [from, to]
+      properties:
+        from:
+          type: string
+          format: date-time
+          description: 与请求一致的包含式 UTC 窗口起点。
+        to:
+          type: string
+          format: date-time
+          description: 与请求一致的排他式 UTC 窗口终点。
+    EventCategoryCounts:
+      type: object
+      additionalProperties:
+        type: integer
+        minimum: 0
+      description: 按 event_type 分组的去重后事件数。
+    DeviceWindowStats:
+      type: object
+      required: [event_count, batch_count, categories]
+      properties:
+        event_count:
+          type: integer
+          minimum: 0
+          description: 在 [from,to) 内发生或与该窗口重叠并对视图有贡献的唯一当前 revision 事件数。
+        batch_count:
+          type: integer
+          minimum: 0
+          description: ACK event_results 至少引用一个上述事件的不同上传批次数。
+        categories:
+          $ref: '#/components/schemas/EventCategoryCounts'
+    ReadDeviceSummary:
+      type: object
+      required: [device_key, device_id, display_name, platform, is_local, status, window]
+      properties:
+        device_key:
+          type: string
+          description: 与 device_id 相同的稳定 WebUI 选择键；不得由显示名或网络地址派生。
+        device_id:
+          type: string
+        display_name:
+          type: string
+        platform:
+          type: string
+          enum: [android, desktop, web]
+        is_local:
+          type: boolean
+          description: 仅在 local_device_id 与本设备稳定 ID 相同时为 true。
+        status:
+          type: string
+          enum: [connected, disconnected]
+          description: |
+            为兼容现有设备卡片而保留的同步新鲜度状态。connected 仅表示 last_seen_at
+            位于服务端配置的新鲜度窗口内，不代表设备此刻在线或可访问。
+        last_seen_at:
+          type: [string, 'null']
+          format: date-time
+          description: 中央服务最后一次成功处理该设备上传批次的时间。
+        last_received_at:
+          type: [string, 'null']
+          format: date-time
+          description: 兼容现有 /api/devices 的 last_seen_at 别名。
+        window:
+          $ref: '#/components/schemas/DeviceWindowStats'
+        today:
+          allOf:
+            - $ref: '#/components/schemas/DeviceWindowStats'
+          description: 兼容现有 /api/devices 的 window 别名；仅当调用方传入业务日边界时才可称为今日。
+    ReadDevicesResponse:
+      type: object
+      required: [window, generated_at, online_window_seconds, devices]
+      properties:
+        window:
+          $ref: '#/components/schemas/ReadWindow'
+        generated_at:
+          type: string
+          format: date-time
+          description: 服务端生成该同步新鲜度快照的 UTC 时间。
+        online_window_seconds:
+          type: integer
+          minimum: 1
+          description: 仅用于按 last_seen_at 计算同步新鲜度，不是在线探测周期。
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReadDeviceSummary'
+    SecondsByName:
+      type: object
+      additionalProperties:
+        type: integer
+        minimum: 0
+      description: 名称到累计秒数的映射。
+    SecondsByHour:
+      type: object
+      additionalProperties:
+        type: integer
+        minimum: 0
+      description: 配置时区中的 0 至 23 整点小时字符串到累计秒数的映射。
+    SecondsByHourAndName:
+      type: object
+      additionalProperties:
+        $ref: '#/components/schemas/SecondsByName'
+      description: 整点小时字符串到名称及累计秒数映射的二级映射。
+    UsageAggregate:
+      type: object
+      required: [events, window_events, web_events, afk_seconds, apps, hourly, hourly_apps, hourly_online, sites, hourly_sites]
+      properties:
+        events:
+          type: integer
+          minimum: 0
+        window_events:
+          type: integer
+          minimum: 0
+        web_events:
+          type: integer
+          minimum: 0
+        afk_seconds:
+          type: integer
+          minimum: 0
+        apps:
+          $ref: '#/components/schemas/SecondsByName'
+          description: 应用累计秒数；桌面端已剪去与明确 AFK 区间重叠的部分，移动端保持前台应用事件口径。
+        hourly:
+          $ref: '#/components/schemas/SecondsByHour'
+          description: 设备使用时长的每小时分布；按保留前台区间并集计算，单设备单小时不超过 3600 秒。
+        hourly_apps:
+          $ref: '#/components/schemas/SecondsByHourAndName'
+        hourly_online:
+          $ref: '#/components/schemas/SecondsByHour'
+          deprecated: true
+          description: 旧客户端兼容别名，值与 hourly 相同；不再表示独立的“在线时长”指标。
+        sites:
+          $ref: '#/components/schemas/SecondsByName'
+        hourly_sites:
+          $ref: '#/components/schemas/SecondsByHourAndName'
+    ReadUsageDevice:
+      allOf:
+        - $ref: '#/components/schemas/UsageAggregate'
+        - type: object
+          required: [device_key, device_id, display_name, platform, is_local]
+          properties:
+            device_key:
+              type: string
+              description: 与稳定 device_id 相同。
+            device_id:
+              type: string
+            display_name:
+              type: string
+            platform:
+              type: string
+              enum: [android, desktop, web]
+            is_local:
+              type: boolean
+    ReadUsageResponse:
+      type: object
+      required: [window, generated_at, timezone, day_start_hour, devices, all]
+      properties:
+        window:
+          $ref: '#/components/schemas/ReadWindow'
+        generated_at:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+          description: hourly、hourly_apps、兼容字段 hourly_online 和 hourly_sites 使用的 IANA 时区。
+        day_start_hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+          description: 供现有 24 小时 WebUI 横轴排序使用；实际查询范围仍完全由 from/to 决定。
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReadUsageDevice'
+        all:
+          $ref: '#/components/schemas/UsageAggregate'
+    ContextEvent:
+      type: object
+      required: [event_id, occurred_at, event_type, source, payload]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: 事件的全局稳定 ID；重传时必须保持不变。
+        occurred_at:
+          type: string
+          format: date-time
+        event_type:
+          type: string
+          enum: [app.foreground, web.foreground, device.input_state, custom.event, calendar.event, task.update, location.observation, location.sample, location.stay, location.visit, manual.note, health.steps_observation]
+        source:
+          $ref: '#/components/schemas/EventSource'
+        duration_seconds:
+          type: integer
+          minimum: 0
+          description: 适用于有持续时间的事件；未知或瞬时事件时省略。
+        revision:
+          type: integer
+          minimum: 0
+          default: 0
+          description: |
+            同一 event_id 的可选单调递增修订号。省略时视为 0。
+            事件默认不可变；只有契约明确允许更新的持续事件才能以更高 revision
+            覆盖旧版本。location.observation 始终不可变。
+        payload:
+          type: object
+          description: 与 event_type 对应的结构化数据；不得放入未声明的敏感原文。
+          additionalProperties: true
+      allOf:
+        - if:
+            properties:
+              event_type:
+                const: app.foreground
+            required: [event_type]
+          then:
+            properties:
+              payload:
+                $ref: '#/components/schemas/AppForegroundPayload'
+        - if:
+            properties:
+              event_type:
+                const: app.foreground
+              source:
+                type: object
+                properties:
+                  collector:
+                    const: windows_native
+                required: [collector]
+            required: [event_type, source]
+          then:
+            properties:
+              payload:
+                allOf:
+                  - $ref: '#/components/schemas/AppForegroundPayload'
+                  - type: object
+                    required: [app]
+                    properties:
+                      app:
+                        $ref: '#/components/schemas/AppIdentity'
+        - if:
+            properties:
+              event_type:
+                const: web.foreground
+            required: [event_type]
+          then:
+            properties:
+              payload:
+                $ref: '#/components/schemas/WebForegroundPayload'
+        - if:
+            properties:
+              event_type:
+                const: device.input_state
+            required: [event_type]
+          then:
+            properties:
+              payload:
+                $ref: '#/components/schemas/DeviceInputStatePayload'
+    EventSource:
+      type: object
+      required: [kind, collector]
+      properties:
+        kind:
+          type: string
+          enum: [android, desktop, web, manual]
+        collector:
+          type: string
+          enum: [accessibility_service, usage_stats, activitywatch, windows_native, fused_location, browser_extension, calendar_import, life_radio_app, manual_entry, step_counter]
+        reliability:
+          type: string
+          enum: [observed, inferred, user_confirmed]
+          default: observed
+    AppIdentity:
+      type: object
+      description: 来源无关的前台应用身份。仅记录可展示的应用名和稳定包/进程标识，不记录窗口标题、完整路径或正文。
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        package_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        activity_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        process_name:
+          type: string
+          pattern: '^[A-Za-z0-9_.-]{1,128}(\\.exe)?$'
+    AppForegroundPayload:
+      type: object
+      description: 前台应用事实。新原生 Windows 采集器必须提供 app；旧 ActivityWatch 和浏览器扩展载荷保持兼容。
+      additionalProperties: true
+      properties:
+        app:
+          type: object
+          description: 历史采集载荷的兼容应用对象；windows_native 事件通过条件约束使用 AppIdentity。
+          additionalProperties: true
+        activitywatch:
+          type: object
+          description: 只供历史 ActivityWatch 或官方浏览器扩展事实兼容读取；新采集器不得写入。
+          additionalProperties: true
+    DeviceInputStatePayload:
+      type: object
+      description: 来源无关的 PC 输入状态区间；不包含键盘输入、窗口内容或屏幕内容。
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [active, afk, locked]
+        idle_threshold_seconds:
+          type: integer
+          minimum: 1
+          description: 仅在由空闲判定状态时提供的采集阈值；不是键鼠输入明细。
+    WebForegroundPayload:
+      type: object
+      description: 浏览器网站前台事实，仅保留规范化域名和可选浏览器应用身份；不保存完整 URL、查询参数、页面标题或无痕状态。
+      additionalProperties: false
+      required: [domain]
+      properties:
+        domain:
+          type: string
+          minLength: 3
+          maxLength: 253
+          pattern: '^(?!https?://)(?!.*[/?#@])[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$'
+          description: 小写规范化域名，不含 scheme、路径、查询参数、片段、端口或 www. 前缀。
+        browser_app:
+          $ref: '#/components/schemas/AppIdentity'
+          description: 可选的浏览器应用身份；不包含标签页标题、配置文件或无痕状态。
+    BatchAcknowledgement:
+      type: object
+      required: [batch_id, accepted_event_ids, confirmed_event_ids, duplicate_event_ids, event_results, rejected_events, received_at]
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        accepted_event_ids:
+          type: array
+          description: |
+            v1.0 兼容字段，仅包含本次新存储或成功更新的事件。
+            v1.1 客户端不得单独依据此字段清理本地队列。
+          items:
+            type: string
+            format: uuid
+        confirmed_event_ids:
+          type: array
+          description: |
+            本次已得到持久化保证的事件，包括 stored、duplicate 与 updated。
+            v1.1 客户端只将此列表中的事件标记为已送达并移出待发送队列。
+          items:
+            type: string
+            format: uuid
+        duplicate_event_ids:
+          type: array
+          description: 已在中央服务中存在且内容一致的事件；这些 ID 同时出现在 confirmed_event_ids。
+          items:
+            type: string
+            format: uuid
+        event_results:
+          type: array
+          description: 按请求事件逐条返回的处理结果。
+          items:
+            $ref: '#/components/schemas/EventResult'
+        rejected_events:
+          type: array
+          description: v1.0 兼容字段；内容与 status=rejected 的 event_results 对应。
+          items:
+            type: object
+            required: [event_id, code]
+            properties:
+              event_id:
+                type: string
+                format: uuid
+              code:
+                type: string
+              message:
+                type: string
+        received_at:
+          type: string
+          format: date-time
+    EventResult:
+      type: object
+      required: [event_id, status]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [stored, duplicate, updated, rejected]
+          description: |
+            stored 表示首次持久化；duplicate 表示同 ID 同内容已存在；
+            updated 表示允许更新的事件已接受更高 revision；
+            rejected 表示未持久化，客户端必须保留该事件供诊断或修正。
+        code:
+          type: string
+          description: rejected 时的稳定机器错误码。
+        message:
+          type: string
+          description: 面向诊断的简短说明，不应包含令牌或敏感 payload。
+    LocationPayload:
+      type: object
+      description: Legacy payload for location.sample and location.stay. New Android clients send immutable location.observation events and leave semantic clustering to PC consumers.
+      required: [kind, latitude, longitude, accuracy_m, observed_until]
+      properties:
+        kind:
+          type: string
+          enum: [sample, stay]
+        latitude:
+          type: number
+        longitude:
+          type: number
+        coordinate_precision_digits:
+          type: integer
+          const: 5
+        accuracy_m:
+          type: number
+        observed_until:
+          type: string
+          format: date-time
+          description: Latest observation time. Together with occurred_at and duration_seconds it defines the segment time range.
+        is_active:
+          type: boolean
+          default: false
+          description: True while Android is still collecting this segment. A later delivery with the same event_id finalizes it by setting false.
+        latest_observed_at:
+          type: string
+          format: date-time
+          description: Latest successful location observation for an active segment.
+        current_latitude:
+          type: number
+          description: Latest point for an active segment. Omitted after finalization.
+        current_longitude:
+          type: number
+          description: Latest point for an active segment. Omitted after finalization.
+        current_accuracy_m:
+          type: number
+          description: Accuracy of current_latitude/current_longitude in metres.
+        place:
+          $ref: '#/components/schemas/SemanticPlace'
+        frequent_place:
+          $ref: '#/components/schemas/FrequentPlace'
+    LocationObservationPayload:
+      type: object
+      description: One immutable accepted Android location reading. Every reading has its own event_id and is synchronized independently; receivers may derive semantic segments without replacing or deleting observations.
+      required: [kind, latitude, longitude, accuracy_m, observed_at, motion_window]
+      properties:
+        kind:
+          type: string
+          const: observation
+        latitude:
+          type: number
+        longitude:
+          type: number
+        coordinate_precision_digits:
+          type: integer
+          const: 5
+        accuracy_m:
+          type: number
+        speed_mps:
+          type: number
+        provider:
+          type: string
+        is_mock:
+          type: boolean
+        observed_at:
+          type: string
+          format: date-time
+          description: Time when Life Link received and persisted this reading. It may be later than event occurred_at when Android replays a fresh buffered fix.
+        location_time:
+          type: string
+          format: date-time
+          description: Timestamp attached to the Android Location object. Android v3.0 also uses this as event occurred_at and as the local observation ordering time.
+        place:
+          $ref: '#/components/schemas/SemanticPlace'
+        motion_window:
+          $ref: '#/components/schemas/MotionWindow'
+    MotionWindow:
+      type: object
+      description: Accelerometer telemetry since the previous accepted location. It is diagnostic context only and never filters or reschedules location collection.
+      required: [started_at, ended_at, accelerometer_available, sensor_sample_count, motion_triggered, trigger_count, threshold_mps2, peak_delta_mps2]
+      properties:
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        accelerometer_available:
+          type: boolean
+        sensor_sample_count:
+          type: integer
+          minimum: 0
+        motion_triggered:
+          type: boolean
+        trigger_count:
+          type: integer
+          minimum: 0
+          description: Number of below-to-above threshold transitions, not the number of all above-threshold sensor readings.
+        threshold_mps2:
+          type: number
+          minimum: 0
+        peak_delta_mps2:
+          type: number
+          minimum: 0
+    CustomEventPayload:
+      type: object
+      description: A user-facing event generated by Life Link itself.
+      required: [event_key, title]
+      properties:
+        event_key:
+          type: string
+          description: Stable machine-readable key such as application.started or sedentary.reminder_triggered.
+        title:
+          type: string
+          maxLength: 120
+        detail:
+          type: string
+          maxLength: 500
+        metadata:
+          type: object
+          additionalProperties: true
+    SemanticPlace:
+      type: object
+      properties:
+        country:
+          type: string
+        admin_area:
+          type: string
+        city:
+          type: string
+        district:
+          type: string
+        road_or_poi:
+          type: string
+        display_label:
+          type: string
+        full_address:
+          type: string
+          description: Allowed only in the personal sharing mode. A public release must remove this field by default.
+        geocode_precision:
+          type: string
+          enum: [address, district, city, coordinates]
+        resolved_at:
+          type: string
+          format: date-time
+        geocode_source:
+          type: string
+          enum: [android_geocoder]
+    FrequentPlace:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        visit_count:
+          type: integer
+          minimum: 1
+        total_stay_seconds:
+          type: integer
+          minimum: 0
+    BlacklistRule:
+      type: object
+      required: [rule_id, rule_type, pattern, normalized_pattern, label, enabled, platform_scope, created_at, updated_at]
+      properties:
+        rule_id:
+          type: string
+          format: uuid
+        rule_type:
+          type: string
+          enum: [app, domain]
+        pattern:
+          type: string
+        normalized_pattern:
+          type: string
+          description: 小写并去除 www. 前缀和末尾点后用于唯一约束的模式
+        label:
+          type: string
+        enabled:
+          type: boolean
+        platform_scope:
+          type: string
+          enum: [pc, android, web]
+          description: app 规则用于 pc/android，domain 规则用于 web；创建时设定后不可修改
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time

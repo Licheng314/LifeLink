@@ -1,0 +1,178 @@
+{
+  "wish": {
+    "wish_id": "4f2a0c7f-5c6b-4a1a-9b8e-52e0c5ca91f2",
+    "text": "Read before bed",
+    "duration_days": 3,
+    "status": "archived",
+    "created_at": "2026-08-09T14:00:00Z",
+    "starts_on": "2026-08-09",
+    "ends_on": "2026-08-11",
+    "business_day_snapshot": {
+      "timezone": "Asia/Shanghai",
+      "day_start_hour": 4,
+      "settings_version": 2
+    },
+    "ai_tracking_enabled": false,
+    "cancelled_at": null,
+    "archived_at": "2026-08-14T20:00:00Z",
+    "completed_days": 2,
+    "wish_days": [
+      {"business_date": "2026-08-09", "evaluation": "completed", "evaluation_source": "manual", "evaluated_at": "2026-08-10T01:00:00Z", "revision": 0},
+      {"business_date": "2026-08-10", "evaluation": "completed", "evaluation_source": "manual", "evaluated_at": "2026-08-11T01:00:00Z", "revision": 1},
+      {"business_date": "2026-08-11", "evaluation": "not_completed", "evaluation_source": "automatic", "evaluated_at": "2026-08-14T20:00:00Z", "revision": 0}
+    ]
+  },
+  "historical_revision": {
+    "request": {"evaluation": "completed"},
+    "response": {"business_date": "2026-08-10", "evaluation": "completed", "evaluation_source": "manual", "evaluated_at": "2026-08-14T20:10:00Z", "revision": 1}
+  },
+  "wish_text_patch": {
+    "request": {"text": "Read one chapter before bed"},
+    "response": {"wish_id": "4f2a0c7f-5c6b-4a1a-9b8e-52e0c5ca91f2", "text": "Read one chapter before bed", "duration_days": 3, "starts_on": "2026-08-09", "ends_on": "2026-08-11"}
+  },
+  "wish_manual_completion": {
+    "request": {"method": "POST", "wish_id": "4f2a0c7f-5c6b-4a1a-9b8e-52e0c5ca91f2"},
+    "response_status": 200,
+    "result": {"status": "archived", "completed_days": 2, "duration_days": 3},
+    "timeline_event": {
+      "event_key": "wish.period_completed",
+      "title": "「Read before bed」心愿已完成",
+      "detail": "完成的天数 2/3，再接再厉吧！",
+      "evidence": {"completed_days": 2, "automatic_finalized": false}
+    },
+    "incomplete_response": {
+      "status": 409,
+      "error": "wish_days_incomplete",
+      "missing_business_dates": ["2026-08-11"]
+    }
+  },
+  "wish_deletion": {
+    "request": {"method": "DELETE", "wish_id": "4f2a0c7f-5c6b-4a1a-9b8e-52e0c5ca91f2"},
+    "response_status": 204,
+    "repeat_response_status": 204,
+    "tombstone": {"wish_id": "4f2a0c7f-5c6b-4a1a-9b8e-52e0c5ca91f2", "creation_request_id": "7b4bf09c-0d2d-4bf6-a68a-a667a6bbd4fb", "creation_body_hash": "a7aa3acd7b3e4aa820d25301cf06a5652e63203ba20a7cb8ffbbcd51ad764ff2", "deleted_at": "2026-08-14T20:20:00Z"},
+    "removed_lifecycle_event_keys": ["wish.created", "wish.cancelled", "wish.period_completed", "wish.result_revised"],
+    "retained_real_trigger_event": {"timeline_event_id": "54a41de6-538d-44c8-a025-16b12f0b2cb8", "event_key": "trigger.blacklist_usage_milestone", "category": "trigger", "wish_id": null, "trigger_id": null},
+    "delayed_create_retry": {"request_id": "7b4bf09c-0d2d-4bf6-a68a-a667a6bbd4fb", "same_normalized_body_status": 410, "same_normalized_body_code": "wish_deleted", "different_normalized_body_status": 409, "different_normalized_body_code": "idempotency_conflict"}
+  },
+  "timeline": {
+    "window": {"from": "2026-08-09T00:00:00Z", "to": "2026-08-17T00:00:00Z"},
+    "events": [
+      {
+        "timeline_event_id": "859710f6-830a-4eb9-820f-5a39978df95d",
+        "occurred_at": "2026-08-14T20:10:00Z",
+        "created_at": "2026-08-14T20:10:00Z",
+        "event_key": "wish.result_revised",
+        "category": "wish",
+        "importance": "normal",
+        "title": "Wish result revised",
+        "detail": null,
+        "source_kind": "user",
+        "source_device_id": "desktop-b76c5155-47e8-4c39-9bd4-2d23388cd35f",
+        "wish_id": "4f2a0c7f-5c6b-4a1a-9b8e-52e0c5ca91f2",
+        "trigger_id": null,
+        "subject": {"business_date": "2026-08-10"},
+        "evidence": {"completed_days": 2, "duration_days": 3},
+        "dedupe_key": "wish:4f2a0c7f-5c6b-4a1a-9b8e-52e0c5ca91f2:result_revised:2026-08-10:1",
+        "ai_reader": {"state": "served", "reader_id": "7bb87364-ffbc-4fcb-b0b0-e6c27d3b355d", "reader_display_name": "塔洛"}
+      },
+      {
+        "timeline_event_id": "e79a0d13-343e-4b99-9334-bf3e974e4408",
+        "occurred_at": "2026-08-14T20:00:00Z",
+        "created_at": "2026-08-14T20:00:01Z",
+        "event_key": "wish.period_completed",
+        "category": "wish",
+        "importance": "normal",
+        "title": "Wish period completed",
+        "detail": null,
+        "source_kind": "central",
+        "source_device_id": null,
+        "wish_id": "4f2a0c7f-5c6b-4a1a-9b8e-52e0c5ca91f2",
+        "trigger_id": null,
+        "subject": {"duration_days": 3},
+        "evidence": {"completed_days": 1, "automatic_finalized": true},
+        "dedupe_key": "wish:4f2a0c7f-5c6b-4a1a-9b8e-52e0c5ca91f2:period_completed",
+        "ai_reader": {"state": "not_served", "reader_id": "7bb87364-ffbc-4fcb-b0b0-e6c27d3b355d", "reader_display_name": "塔洛"}
+      }
+    ]
+  },
+  "trigger_create": {
+    "request_id": "97c20d68-2a7a-4682-bce0-ef5188c4ef81",
+    "trigger_type": "blacklist_usage_milestone",
+    "config_version": 1,
+    "parameters": {"platform_scope": "all"},
+    "interval_minutes": 60,
+    "enabled": true
+  },
+  "trigger": {
+    "trigger_id": "6734c5d6-57ce-46f7-a1ab-3722f3e7f947",
+    "wish_id": "4f2a0c7f-5c6b-4a1a-9b8e-52e0c5ca91f2",
+    "trigger_type": "blacklist_usage_milestone",
+    "config_version": 1,
+    "parameters": {"platform_scope": "all"},
+    "interval_minutes": 60,
+    "enabled": true,
+    "created_at": "2026-08-10T00:00:00Z",
+    "updated_at": "2026-08-10T00:00:00Z",
+    "last_triggered_at": null
+  },
+  "scheduled_wish_reminder": {
+    "trigger_type": "scheduled_reminder",
+    "wish_id": "4f2a0c7f-5c6b-4a1a-9b8e-52e0c5ca91f2",
+    "parameters": {"reminder_local_time": "22:30"},
+    "late_miss_policy": "do_not_backfill_after_15_minutes",
+    "timeline_event": {
+      "event_key": "wish.scheduled_reminder",
+      "title": "心愿提醒·Read before bed",
+      "detail": "心愿「Read before bed」的定时提醒已到达。",
+      "importance": "high"
+    }
+  },
+  "shared_event_settings": {
+    "timezone": "Asia/Shanghai",
+    "day_start_hour": 4,
+    "primary_health_device_id": null,
+    "sleep_local_time": "23:00",
+    "ai_display_name": "AI",
+    "morning_report": {"enabled": false, "mode": "after_first_usage", "delay_minutes": 60, "local_time": null},
+    "evening_report": {"enabled": false, "local_time": "23:00"},
+    "periodic_summary": {"enabled": false, "start_local_time": "10:00", "end_local_time": "22:00", "interval_minutes": 120},
+    "settings_version": 3,
+    "updated_at": "2026-08-15T00:00:00Z"
+  },
+  "event_background": {
+    "business_date": "2026-08-15",
+    "generated_at": "2026-08-15T08:00:00Z",
+    "background_summary": {
+      "wish": {"title": "心愿", "items": [{"item_key": "wish.pending", "text": "「每天阅读」今天的结果尚未填写。"}]},
+      "device_and_apps": {"title": "设备与应用", "items": [{"item_key": "usage.total", "text": "所有设备当前业务日累计使用 1 小时 30 分钟。"}]},
+      "blacklist": {"title": "黑名单", "items": [{"item_key": "blacklist.total", "text": "全平台黑名单用量 10 分钟。"}]},
+      "location_and_activity": {"title": "位置与活动", "items": [{"item_key": "activity.interval:2026-08-15T06:45:00Z", "text": "14:45–15:30 步行，持续 45 分钟。"}]},
+      "device_usage_seconds": 5400,
+      "blacklist_usage_seconds": 600
+    },
+    "ai_understanding": {"title": "AI 理解说明", "items": [{"item_key": "business_day", "text": "业务日按 Asia/Shanghai 与中央 day_start_hour 计算。"}, {"item_key": "realtime", "text": "超过 15 分钟的实时状态不进入 AI 背景。"}], "timezone": "Asia/Shanghai", "real_time_valid_for_minutes": 15},
+    "real_time_items": [
+      {"kind": "device_online", "observed_at": "2026-08-15T07:55:00Z", "is_stale": false, "include_in_ai": true, "device_id": "desktop-b76c5155-47e8-4c39-9bd4-2d23388cd35f", "display_text": "书房电脑在线。"},
+      {"kind": "current_location", "observed_at": "2026-08-15T07:40:00Z", "is_stale": true, "include_in_ai": false, "device_id": null, "display_text": "上次位置：望京 SOHO。"}
+    ]
+  },
+  "system_milestone": {
+    "event_key": "system.device_usage_milestone",
+    "statistics_window": {"business_date": "2026-08-15", "from": "2026-08-14T20:00:00Z", "to": "2026-08-15T16:00:00Z"},
+    "evidence": {"rule": "device_usage_hourly", "threshold_minutes": 120, "business_date": "2026-08-15", "aggregate_scope": "all_devices", "aggregate_usage_seconds": 7200, "device_id": null, "stable_place_id": null, "activity_state": null, "online_device_ids": []},
+    "dedupe_key": "system:device_usage:2026-08-15:120"
+  },
+  "report_event": {
+    "event_key": "report.periodic",
+    "importance": "high",
+    "statistics_window": {"business_date": "2026-08-15", "from": "2026-08-15T06:00:00Z", "to": "2026-08-15T08:00:00Z"},
+    "evidence": {"report_kind": "periodic", "business_date": "2026-08-15", "statistics_window": {"business_date": "2026-08-15", "from": "2026-08-15T06:00:00Z", "to": "2026-08-15T08:00:00Z"}, "periodic_minutes": 120, "body": "过去两小时共记录到 48 分钟设备使用，期间生成了一条心愿提醒。"},
+    "delivery": {"state": "not_configured", "target_display_name": "AI", "updated_at": "2026-08-15T08:00:00Z"}
+  },
+  "late_online_milestone": {
+    "event_key": "system.late_online_check",
+    "evidence": {"rule": "late_online_half_hourly", "threshold_minutes": 30, "business_date": "2026-08-15", "aggregate_scope": null, "aggregate_usage_seconds": null, "device_id": null, "stable_place_id": null, "activity_state": null, "online_device_ids": ["desktop-b76c5155-47e8-4c39-9bd4-2d23388cd35f"]},
+    "meaning": "recent_15_minute_verifiable_fact_or_heartbeat_not_foreground_usage"
+  }
+}

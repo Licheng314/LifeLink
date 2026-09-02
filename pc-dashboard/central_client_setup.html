@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Life Link 中央客户端设置</title>
+  <style>
+    :root { color-scheme: light; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background:#f5f7fb; color:#172033; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; }
+    main { width:min(680px, 100%); background:#fff; border:1px solid #e1e6ef; border-radius:16px; box-shadow:0 16px 50px rgba(34,54,90,.12); padding:28px; }
+    h1 { margin:0 0 8px; font-size:24px; }
+    .muted { color:#667085; line-height:1.65; }
+    label { display:block; margin:24px 0 8px; font-weight:650; }
+    textarea { width:100%; min-height:92px; resize:vertical; border:1px solid #cfd6e4; border-radius:10px; padding:12px; font:14px ui-monospace, Consolas, monospace; }
+    textarea:focus { outline:2px solid #8ab4ff; border-color:#3977db; }
+    .actions { display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; }
+    button { border:0; border-radius:9px; padding:10px 18px; background:#2563eb; color:#fff; font-weight:650; cursor:pointer; }
+    button.secondary { background:#eef3ff; color:#2456ad; }
+    button:disabled { opacity:.55; cursor:wait; }
+    #preview { display:none; margin-top:22px; padding:16px; border-radius:12px; background:#f7f9fd; border:1px solid #e2e8f3; }
+    dl { display:grid; grid-template-columns:120px 1fr; gap:9px 14px; margin:0; }
+    dt { color:#667085; } dd { margin:0; overflow-wrap:anywhere; }
+    #status { min-height:24px; margin-top:16px; font-weight:600; }
+    #status.error { color:#b42318; } #status.success { color:#087443; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>连接 Life Link 中央服务</h1>
+  <div class="muted">当前电脑尚未完成中央客户端配置。粘贴中央主机生成的单行 LR1 邀请码，核对信息后再确认连接。邀请码不会写入浏览器地址、历史记录或本地存储。</div>
+
+  <label for="invite-code">单行 LR1 邀请码</label>
+  <textarea id="invite-code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="LR1.…"></textarea>
+  <div class="actions">
+    <button id="preview-button" type="button">解析并预览</button>
+  </div>
+
+  <section id="preview" aria-live="polite">
+    <dl>
+      <dt>中央服务</dt><dd id="preview-url">--</dd>
+      <dt>权限范围</dt><dd id="preview-scope">--</dd>
+      <dt>到期时间</dt><dd id="preview-expiry">--</dd>
+      <dt>本机设备</dt><dd id="preview-device">--</dd>
+    </dl>
+    <div class="actions">
+      <button id="confirm-button" type="button">确认连接</button>
+      <button id="cancel-button" class="secondary" type="button">重新粘贴</button>
+    </div>
+  </section>
+  <div id="status" role="status" aria-live="polite"></div>
+</main>
+<script>
+(() => {
+  const inviteInput = document.getElementById('invite-code');
+  const previewButton = document.getElementById('preview-button');
+  const confirmButton = document.getElementById('confirm-button');
+  const cancelButton = document.getElementById('cancel-button');
+  const previewPanel = document.getElementById('preview');
+  const status = document.getElementById('status');
+  let previewId = null;
+
+  function setStatus(message, kind = '') {
+    status.textContent = message;
+    status.className = kind;
+  }
+
+  async function jsonRequest(path, options = {}) {
+    const response = await fetch(path, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      cache: 'no-store',
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.message || '请求失败');
+    return payload;
+  }
+
+  previewButton.addEventListener('click', async () => {
+    const requestBody = JSON.stringify({ invite_code: inviteInput.value.trim() });
+    inviteInput.value = '';
+    previewId = null;
+    previewPanel.style.display = 'none';
+    previewButton.disabled = true;
+    setStatus('正在解析邀请码…');
+    try {
+      const result = await jsonRequest('/api/setup/preview', { method: 'POST', body: requestBody });
+      previewId = result.preview_id;
+      document.getElementById('preview-url').textContent = result.preview.central_base_url;
+      document.getElementById('preview-scope').textContent = result.preview.scope_label;
+      document.getElementById('preview-expiry').textContent = new Date(result.preview.expires_at).toLocaleString('zh-CN');
+      document.getElementById('preview-device').textContent = result.preview.device_name;
+      previewPanel.style.display = 'block';
+      setStatus('请核对以上信息，再确认连接。');
+    } catch (error) {
+      setStatus(error.message, 'error');
+    } finally {
+      previewButton.disabled = false;
+    }
+  });
+
+  confirmButton.addEventListener('click', async () => {
+    if (!previewId) return;
+    confirmButton.disabled = true;
+    setStatus('正在向中央服务注册本机…');
+    try {
+      const result = await jsonRequest('/api/setup/claim', {
+        method: 'POST', body: JSON.stringify({ preview_id: previewId }),
+      });
+      previewId = null;
+      inviteInput.value = '';
+      previewPanel.style.display = 'none';
+      setStatus(result.message || '配置成功，正在启动 Life Link。', 'success');
+    } catch (error) {
+      previewId = null;
+      setStatus(`${error.message} 请重新粘贴邀请码。`, 'error');
+    } finally {
+      confirmButton.disabled = false;
+    }
+  });
+
+  cancelButton.addEventListener('click', () => {
+    previewId = null;
+    previewPanel.style.display = 'none';
+    inviteInput.value = '';
+    inviteInput.focus();
+    setStatus('已清除预览，请重新粘贴邀请码。');
+  });
+})();
+</script>
+</body>
+</html>

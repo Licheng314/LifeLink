@@ -1,0 +1,33 @@
+# Python caches and local environments
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.workbuddy/
+
+# Local logs and transient files
+*.log
+*.tmp
+*.bak
+central-server/config.json
+pc-dashboard/config.json
+central-server/*.sqlite3
+central-server/*.sqlite3-*
+runtime/
+build/
+central-server/LifeLink Central Service.exe
+pc-dashboard/LifeLink PC Client.exe
+
+# Android local/build state (mobile-app has more specific rules too)
+mobile-app/.gradle/
+mobile-app/.idea/
+mobile-app/app/build/
+mobile-app/local.properties
+mobile-app/*.apk
+mobile-app/*.aab
+
+# Obsidian shared settings are allowed; per-user workspace layout is local.
+development/docs/.obsidian/workspace.json

@@ -1,0 +1,29 @@
+{
+	"nodes":[
+		{"id":"project-control","type":"file","file":"项目总控.md","x":-780,"y":-545,"width":300,"height":170,"color":"3"},
+		{"id":"doc-index","type":"file","file":"README.md","x":-1260,"y":-545,"width":260,"height":170,"color":"3"},
+		{"id":"webui","type":"text","text":"# WebUI\n\n经 PC 本地代理读取中央视图\n不接触中央秘密凭据","x":490,"y":-737,"width":250,"height":190,"color":"5"},
+		{"id":"contracts","type":"text","text":"# contracts\n\n共享字段、端点、权限、ACK 与 fixture\n\n**规模**：14 文件 / 约 4399 行\n**影响**：约束 PC、Android、中央\n**状态**：v1.15.3；设备管理、心愿事件、健康活动和单 AI reader 均已进入共享契约\n\n关联：\n- [契约入口](../../contracts/README.md)\n- [中央交付](../../contracts/central-delivery-v1.md)\n- [位置语义](../../contracts/location-semantic-events-v1.md)","x":-780,"y":-146,"width":320,"height":390,"color":"2"},
+		{"id":"history","type":"text","text":"# 历史与背景\n\n日期交接记录和候选方向只作线索：\n- [[已过期/2026-08-01-中央化阶段状态与手机端交接]]\n- [[已过期/2026-07-30-中央化改造-总控与分工]]\n- [[背景参考/个人数据系统-项目规划分析]]\n\n不覆盖现役文档、契约和代码事实。","x":-1260,"y":-70,"width":310,"height":330},
+		{"id":"integration-tests","type":"text","text":"# integration-tests\n\n跨 PC 与中央的闭环验证\n\n**规模**：2 文件 / 约 506 行\n**状态**：8 项闭环测试通过\n\n关联：\n- [测试入口](../../integration-tests/README.md)","x":-820,"y":-977,"width":270,"height":240},
+		{"id":"mobile-app","type":"text","text":"# mobile-app\n\nAndroid 权限、采集、Room 队列、后台上传与手机界面\n\n**规模**：54 文件 / 约 10772 行\n**状态**：应用用量、位置、计步、心愿、提醒和中央同步已进入现役；本轮无 Android 源码变化\n\n关联：\n- [模块 README](../../mobile-app/README.md)\n- [中央同步](../../mobile-app/CENTRAL_SYNC.md)\n- [发布说明](../../mobile-app/RELEASES.md)\n- [[项目总控]]","x":-300,"y":116,"width":400,"height":400,"color":"4"},
+		{"id":"map-summary","type":"text","text":"# Life Link 项目地图\n\nPersonal Context for AI · 连接你的设备、数据与 AI\n\n语义核验：2026-08-22\n当前阶段：中央化采集、管理、健康活动、心愿事件与 AI reader 闭环已完成；准备选择下一阶段。\n\n节点面积 ≈ 源码规模；颜色表示模块类别。","x":-1160,"y":405,"width":760,"height":210,"color":"3"},
+		{"id":"central-server","type":"text","text":"# central-server\n\n身份、鉴权、逐事件 ACK、去重、SQLite 长期存储与派生视图\n\n**规模**：27 文件 / 约 9827 行\n**状态**：设备、心愿事件、健康活动、报告和 AI reader 均已加载运行；中央托盘负责签发设备配对码和 AI 匹配码\n\n关联：\n- [模块 README](../../central-server/README.md)\n- [[项目总控]]","x":490,"y":-195,"width":400,"height":460,"color":"6"},
+		{"id":"pc-dashboard","type":"text","text":"# pc-dashboard\n\nAW 采集、本地 outbox、中央代理、托盘与 WebUI\n\n**规模**：27 文件 / 约 10525 行\n**状态**：首页渐进加载、缓存限额、outbox 压缩、设备/黑名单管理和跨日设置均已加载运行\n\n关联：\n- [模块 README](../../pc-dashboard/README.md)\n- [WebUI README](../../pc-dashboard/web/README.md)\n- [[项目总控]]","x":-300,"y":-460,"width":430,"height":340,"color":"5"},
+		{"id":"risks","type":"text","text":"# 当前待验收 / 风险\n\n- 下一份真实早报确认睡眠读取日期\n- 旧位置段长期 `is_active=true` 的兼容过滤\n- 当前阶段实现仍未提交，HEAD 不是运行版本\n\n下一阶段候选见项目总控；候选模块不进入主拓扑。","x":505,"y":360,"width":350,"height":280,"color":"1"},
+		{"id":"ai-reader","type":"text","text":"# AI reader\n\n独立只读身份读取中央背景、理解说明和游标增量\n单有效连接；OpenClaw 稳定进程绑定已实机确认","x":1040,"y":-50,"width":280,"height":170,"color":"6"}
+	],
+	"edges":[
+		{"id":"edge-doc-index-control","fromNode":"doc-index","fromSide":"right","toNode":"project-control","toSide":"left","color":"3","label":"现役入口"},
+		{"id":"edge-control-contracts","fromNode":"project-control","fromSide":"bottom","toNode":"contracts","toSide":"top","color":"3","label":"治理边界"},
+		{"id":"edge-contracts-pc","fromNode":"contracts","fromSide":"right","toNode":"pc-dashboard","toSide":"left","color":"2","label":"契约约束"},
+		{"id":"edge-contracts-mobile","fromNode":"contracts","fromSide":"right","toNode":"mobile-app","toSide":"left","color":"2","label":"契约约束"},
+		{"id":"edge-contracts-central","fromNode":"contracts","fromSide":"right","toNode":"central-server","toSide":"left","color":"2"},
+		{"id":"edge-pc-upload","fromNode":"pc-dashboard","fromSide":"right","toNode":"central-server","toSide":"left","color":"5","label":"HTTPS 事件 / ACK"},
+		{"id":"edge-mobile-upload","fromNode":"mobile-app","fromSide":"right","toNode":"central-server","toSide":"left","color":"4","label":"HTTPS 事件 / ACK"},
+		{"id":"edge-central-read","fromNode":"central-server","fromSide":"top","toNode":"pc-dashboard","toSide":"right","color":"6","label":"中央读取视图"},
+		{"id":"edge-pc-webui","fromNode":"pc-dashboard","fromSide":"right","toNode":"webui","toSide":"left","color":"5","label":"本地代理"},
+		{"id":"edge-central-ai","fromNode":"central-server","fromSide":"right","toNode":"ai-reader","toSide":"left","color":"6","label":"只读摘要"},
+		{"id":"edge-integration-pc","fromNode":"integration-tests","fromSide":"right","toNode":"pc-dashboard","toSide":"top","label":"闭环验证"}
+	]
+}

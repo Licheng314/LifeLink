@@ -1,0 +1,230 @@
+:root {
+  --bg: #F5F1EA;
+  --sidebar-bg: #F5F1EA;
+  --card-bg: #FFFDF9;
+  --text: #3E3A36;
+  --text-secondary: #9B9186;
+  --border: #E8DED0;
+  --accent: #35D4AC;
+  --accent-light: rgba(53, 212, 172, 0.10);
+  --success: #35D4AC;
+  --warning: #FBBF24;
+  --danger: #DC2626;
+  --info: #38BDF8;
+  --tag-bg: rgba(53, 212, 172, 0.08);
+  --shadow: 0 4px 16px rgba(62, 58, 54, 0.06);
+  --radius: 18px;
+  --font: "Sarasa Gothic SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 240px;
+  background: var(--sidebar-bg);
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 100;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.sidebar-header {
+  padding: 18px 14px 10px;
+  border-bottom: 1px solid #EDE6D8;
+}
+
+.sidebar-brand { display:flex; align-items:center; gap:10px; }
+.sidebar-brand-copy { min-width:0; }
+.sidebar-brand-logo { display:block; width:44px; height:44px; flex:0 0 44px; border-radius:11px; object-fit:cover; }
+.sidebar-title-row { display:flex; align-items:center; gap:6px; }
+
+@media (max-width: 900px) {
+  .sidebar-header { padding:8px; }
+  .sidebar-brand-copy, .business-calendar { display:none; }
+}
+
+.sidebar-header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #3E3A36;
+  letter-spacing: -0.5px;
+  line-height: 1.15;
+}
+
+.sidebar-header .subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.sidebar-nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 0;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-left: 3px solid transparent;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.nav-item:hover {
+  background: rgba(53, 212, 172, 0.08);
+  color: #3E3A36;
+}
+
+.nav-item.active {
+  background: rgba(53, 212, 172, 0.10);
+  border-left-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nav-item .icon {
+  font-size: 18px;
+  width: 24px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-item .icon svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
+}
+
+.nav-item .badge {
+  margin-left: auto;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.nav-section {
+  padding: 8px 20px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  margin-top: 16px;
+}
+
+/* 底部导航组：设备管理 / 小工具 从下往上排，贴底对齐 */
+.sidebar-nav-bottom {
+  margin-top: auto;
+}
+
+.business-calendar {
+  margin: 10px 0 0;
+  padding: 3px 2px 1px;
+  font-size: 12px;
+}
+.business-calendar-head { display:grid; grid-template-columns:22px 1fr 22px; align-items:center; gap:4px; }
+.business-calendar-head strong { color:var(--text); font-size:12px; }
+.calendar-month { display:flex; align-items:center; justify-content:center; gap:5px; white-space:nowrap; }
+.calendar-month button { border:0; padding:1px 4px; border-radius:4px; background:transparent; color:var(--accent); cursor:pointer; font:inherit; font-size:11px; }
+.calendar-month button:hover { background:var(--accent-light); }
+.calendar-week-button { width:22px; height:22px; padding:0; border:0; border-radius:5px; background:transparent; color:var(--text-secondary); font-size:20px; line-height:18px; cursor:pointer; }
+.calendar-week-button:hover { background:var(--bg); color:var(--text); }
+.calendar-week-button:disabled { cursor:not-allowed; opacity:.3; }
+.business-calendar-weekdays, .business-calendar-days { display:grid; grid-template-columns:repeat(7, 1fr); gap:2px; text-align:center; }
+.business-calendar-weekdays { margin:5px 0 1px; color:var(--text-secondary); font-size:10px; }
+.business-calendar-days { min-height:24px; }
+.calendar-day, .calendar-loading { min-height:24px; display:flex; align-items:center; justify-content:center; border:1px solid transparent; border-radius:6px; color:var(--text-secondary); }
+.calendar-day { position:relative; padding:0; background:transparent; cursor:pointer; font:inherit; }
+.calendar-day.has-data { color:#554c44; font-weight:600; }
+.calendar-day:hover:not(:disabled) { background:var(--bg); color:var(--text); }
+.calendar-day.is-selected { border-color:var(--accent); background:rgba(79,140,255,.12); color:var(--text); font-weight:700; }
+.calendar-day.is-today { color:var(--accent); font-weight:700; }
+.calendar-day:disabled { cursor:not-allowed; opacity:.35; }
+.calendar-loading { grid-column:1 / -1; }
+.calendar-day-size { position:relative; }
+.calendar-day-size[data-breakdown]:hover::after { content:attr(data-breakdown); position:absolute; z-index:20; bottom:calc(100% + 6px); left:0; width:max-content; max-width:220px; padding:7px 8px; border-radius:6px; background:#34312d; color:#fff; box-shadow:0 2px 8px rgba(0,0,0,.18); line-height:1.5; white-space:pre-line; }
+.sidebar-data-size { padding:8px 20px; border-top:1px solid #EDE6D8; color:var(--text-secondary); font-size:12px; }
+
+.sidebar-footer {
+  padding: 16px 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.server-label {
+  color: var(--text-secondary);
+}
+
+/* Main Content */
+.main {
+  margin-left: 240px;
+  flex: 1;
+  min-width: 0;
+  padding: 32px;
+  max-width: 1400px;
+}
+
+.page { display: none; }
+.page.active { display: block; }
+
+.page-header {
+  margin-bottom: 28px;
+}
+
+.page-header h2 {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.5px;
+}
+
+.historical-data-badge { display:inline-flex; align-items:center; margin-left:6px; padding:2px 6px; border-radius:999px; background:#fff0c7; color:#8a5a00; font-size:11px; font-weight:600; letter-spacing:0; vertical-align:2px; }
+.historical-data-badge[hidden] { display:none; }
+
+/* 页面标题与面板标题中的 Lucide 图标尺寸 */
+.page-header h2 svg,
+.chart-panel h3 svg,
+.health-content h3 svg,
+.event-timeline-heading h3 svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
+  vertical-align: -3px;
+  margin-right: 3px;
+}
+
+.page-header .desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
