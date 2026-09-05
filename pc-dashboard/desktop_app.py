@@ -1715,13 +1715,19 @@ class LifeRadioDesktopApp:
             return
         except Exception as error:
             logging.warning("打开中央 WebUI 失败：%s", error)
-            if getattr(error, "code", None) == 404:
+            status_code = getattr(error, "code", None)
+            if status_code == 409:
+                headline = "中央 HTTPS WebUI 尚未配置"
+                detail = "请在中央服务端托盘打开本机管理页，配置并验证 HTTPS 外部地址后，再从此处打开。"
+            elif status_code == 404:
+                headline = f"无法打开中央 HTTPS WebUI：{error}"
                 detail = "当前运行的中央服务版本不支持 HTTPS WebUI；请重启为当前 LifeLink 中央服务。"
             else:
+                headline = f"无法打开中央 HTTPS WebUI：{error}"
                 detail = "请先在中央服务端配置并验证 HTTPS 外部地址。"
             messagebox.showerror(
                 "Life Link",
-                f"无法打开中央 HTTPS WebUI：{error}\n\n{detail}",
+                f"{headline}\n\n{detail}",
             )
 
     def open_status(self) -> None:

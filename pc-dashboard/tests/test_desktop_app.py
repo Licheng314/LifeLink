@@ -3,6 +3,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
+from urllib.error import HTTPError
 
 import desktop_app
 import pc_windows_startup
@@ -148,6 +149,20 @@ class WindowsInputActivityDetectorTests(unittest.TestCase):
 
 
 class DesktopStartupRecoveryTests(unittest.TestCase):
+    def test_open_dashboard_explains_when_https_network_is_not_configured(self):
+        app = object.__new__(LifeRadioDesktopApp)
+        app.http_opener = mock.Mock()
+        app.http_opener.open.side_effect = HTTPError(
+            "http://127.0.0.1:8091/v1/web-sessions", 409, "Conflict", {}, None,
+        )
+        with mock.patch.dict(desktop_app.os.environ, {
+            "LIFE_RADIO_CENTRAL_BASE_URL": "http://127.0.0.1:8091",
+            "LIFE_RADIO_CENTRAL_TOKEN": "test-token",
+        }, clear=False), mock.patch.object(desktop_app.messagebox, "showerror") as show_error:
+            app.open_dashboard()
+        self.assertIn("尚未配置", show_error.call_args.args[1])
+        self.assertNotIn("HTTP Error 409", show_error.call_args.args[1])
+
     def test_packaged_client_allows_a_longer_sync_server_start_window(self):
         self.assertGreaterEqual(desktop_app.SYNC_SERVER_START_TIMEOUT_SECONDS, 20)
 

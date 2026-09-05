@@ -75,6 +75,20 @@ class SyncServerTestCase(unittest.TestCase):
         connection.close()
         return response.status, body
 
+    def test_central_read_network_failure_is_a_controlled_error(self):
+        previous_url = sync_server.CENTRAL_BASE_URL
+        try:
+            sync_server.CENTRAL_BASE_URL = "http://127.0.0.1:8091"
+            with patch.object(sync_server, "get_central_read_token", return_value="test-token"), patch.object(
+                sync_server, "CentralReadClient"
+            ) as read_client:
+                read_client.return_value.opener.side_effect = sync_server.URLError("offline")
+                with self.assertRaises(sync_server.CentralReadError) as raised:
+                    sync_server._central_read_json("/v1/timeline-events")
+            self.assertEqual(raised.exception.category, "central_unavailable")
+        finally:
+            sync_server.CENTRAL_BASE_URL = previous_url
+
     def test_calendar_days_proxies_the_selected_inclusive_range(self):
         payload = {
             "timezone": "Asia/Shanghai", "day_start_hour": 4,

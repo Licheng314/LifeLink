@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 import urllib.request
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo
 
 from central_client import CentralClient, CentralReadClient, CentralReadError, CentralDeviceClient
