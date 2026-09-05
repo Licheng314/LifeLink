@@ -79,6 +79,15 @@ def _windows_blocked(*, registry=winreg) -> bool:
 
 
 def status(*, registry=winreg, environ: Mapping[str, str] | None = None) -> dict[str, bool | str]:
+    if registry is None:
+        return {
+            "supported": False,
+            "enabled": False,
+            "registered": False,
+            "blocked_by_windows": False,
+            "requested_enabled": False,
+            "state": "unsupported",
+        }
     registered = shortcut_path(environ=environ).is_file()
     blocked = _windows_blocked(registry=registry)
     requested = bool(_preference(registry=registry))
@@ -86,7 +95,7 @@ def status(*, registry=winreg, environ: Mapping[str, str] | None = None) -> dict
         "blocked" if blocked
         else ("enabled" if registered else ("missing" if requested else "disabled"))
     )
-    return {"enabled": registered and not blocked, "registered": registered,
+    return {"supported": True, "enabled": registered and not blocked, "registered": registered,
             "blocked_by_windows": blocked, "requested_enabled": requested,
             "state": state}
 

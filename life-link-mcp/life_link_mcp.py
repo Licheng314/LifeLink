@@ -7,6 +7,7 @@ import argparse
 import base64
 import ctypes
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -19,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 SERVER_NAME = "life-link-mcp"
@@ -73,8 +74,77 @@ def default_state_dir() -> Path:
     root = os.environ.get("LIFE_LINK_DATA_ROOT") or os.environ.get("LIFE_LINK_RUNTIME_ROOT")
     if root:
         return Path(os.path.expandvars(root)).expanduser() / "ai" / "mcp"
-    profile = os.environ.get("USERPROFILE")
-    return (Path(profile) if profile else Path.home()) / "LifeLink" / "ai" / "mcp"
+    if os.name == "nt":
+        profile = os.environ.get("USERPROFILE")
+        return (Path(profile) if profile else Path.home()) / "LifeLink" / "ai" / "mcp"
+    xdg_state = os.environ.get("XDG_STATE_HOME")
+    if xdg_state:
+        return Path(xdg_state).expanduser() / "life-link" / "mcp"
+    return Path.home() / ".local" / "state" / "life-link" / "mcp"
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    normalized = hostname.rstrip(".").lower()
+    if normalized == "localhost" or normalized.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_unspecified
+
+
+def _canonical_https_origin(parsed: Any) -> str:
+    hostname = parsed.hostname
+    if not hostname or _is_loopback_host(hostname):
+        raise LifeLinkMCPError("invalid_endpoint", "Life Link endpoint must use a non-loopback HTTPS host")
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise LifeLinkMCPError("invalid_endpoint", "Life Link endpoint port is invalid") from error
+    host = hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    return f"https://{host}" + (f":{port}" if port is not None and port != 443 else "")
+
+
+def _validate_https_endpoint(url: Any, expected_path: str, *, allow_query: bool = False) -> str:
+    try:
+        parsed = urlparse(str(url))
+    except ValueError as error:
+        raise LifeLinkMCPError("invalid_endpoint", "Life Link endpoint is invalid") from error
+    if (
+        parsed.scheme != "https"
+        or parsed.username
+        or parsed.password
+        or parsed.path != expected_path
+        or parsed.fragment
+        or (parsed.query and not allow_query)
+    ):
+        raise LifeLinkMCPError("invalid_endpoint", "Life Link endpoint must be an HTTPS URL without credentials")
+    return _canonical_https_origin(parsed)
+
+
+def _secure_directory(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        try:
+            os.chmod(path, 0o700)
+        except OSError as error:
+            raise LifeLinkMCPError("state_unreadable", "Life Link MCP state directory cannot be protected") from error
+
+
+def _verify_private_state(path: Path, root: Path) -> None:
+    if os.name == "nt":
+        return
+    try:
+        for directory in (root, root / "profiles"):
+            if directory.exists() and directory.stat().st_mode & 0o077:
+                raise LifeLinkMCPError("state_unreadable", "Life Link MCP state directory permissions are too broad")
+        if path.exists() and path.stat().st_mode & 0o077:
+            raise LifeLinkMCPError("state_unreadable", "Life Link MCP state file permissions are too broad")
+    except OSError as error:
+        raise LifeLinkMCPError("state_unreadable", "Life Link MCP state permissions cannot be checked") from error
 
 
 def _safe_profile_id(value: Any) -> str:
@@ -161,6 +231,7 @@ class StateStore:
         self.path = self.root / "profiles" / f"{self.profile_id}.json"
 
     def load(self) -> dict[str, Any] | None:
+        _verify_private_state(self.path, self.root)
         try:
             envelope = json.loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -181,12 +252,25 @@ class StateStore:
             raise LifeLinkMCPError("state_unreadable", "Life Link MCP state cannot be decrypted for this user") from error
         if not isinstance(payload, dict) or not isinstance(payload.get("access_token"), str):
             raise LifeLinkMCPError("state_unreadable", "Life Link MCP state is incomplete")
+        try:
+            context_origin = _validate_https_endpoint(
+                payload.get("context_url"), "/v1/read/ai/context",
+            )
+        except LifeLinkMCPError as error:
+            raise LifeLinkMCPError("state_unreadable", "Life Link MCP state context endpoint is invalid") from error
+        if envelope.get("context_origin") != context_origin or payload.get("context_origin") != context_origin:
+            raise LifeLinkMCPError("state_unreadable", "Life Link MCP state origin does not match its context endpoint")
         return {**envelope, "secret": payload}
 
     def save(
         self, *, central_instance_id: str, reader: dict[str, Any], secret: dict[str, Any],
         created_at: str | None = None, disabled_reason: str | None = None,
     ) -> None:
+        context_origin = _validate_https_endpoint(secret.get("context_url"), "/v1/read/ai/context")
+        if secret.get("context_origin") != context_origin:
+            raise LifeLinkMCPError("state_unreadable", "Life Link MCP state origin does not match its context endpoint")
+        _secure_directory(self.root)
+        _secure_directory(self.path.parent)
         now = utc_now_text()
         encoded = json.dumps(secret, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         protected = base64.b64encode(_dpapi_protect(encoded)).decode("ascii")
@@ -194,6 +278,7 @@ class StateStore:
             "schema_version": STATE_SCHEMA,
             "profile_id": self.profile_id,
             "central_instance_id": central_instance_id,
+            "context_origin": context_origin,
             "reader": reader,
             "created_at": created_at or now,
             "updated_at": now,
@@ -295,14 +380,12 @@ class ConnectionPackage:
         required = {"central_instance_id", "claim_url", "pairing_id", "pairing_token"}
         if not isinstance(pairing, dict) or not required.issubset(pairing):
             raise LifeLinkMCPError("invalid_package", "One-time pairing material is incomplete")
-        parsed = urlparse(str(pairing["claim_url"]))
-        if (
-            parsed.scheme not in {"http", "https"}
-            or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
-            or parsed.path != "/v1/ai-readers/pairings/claim"
-            or parsed.username or parsed.password or parsed.query or parsed.fragment
-        ):
-            raise LifeLinkMCPError("invalid_package", "Pairing endpoint must be the local Life Link claim endpoint")
+        if not isinstance(pairing.get("central_instance_id"), str) or not pairing["central_instance_id"].strip():
+            raise LifeLinkMCPError("invalid_package", "MCP package central instance ID is invalid")
+        try:
+            _validate_https_endpoint(pairing["claim_url"], "/v1/ai-readers/pairings/claim")
+        except LifeLinkMCPError as error:
+            raise LifeLinkMCPError("invalid_package", "Pairing endpoint must be a verified HTTPS Life Link claim endpoint") from error
         return pairing
 
     def discard_pairing(self) -> None:
@@ -312,10 +395,28 @@ class ConnectionPackage:
             pass
 
 
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Keep bearer credentials on the verified origin by rejecting every redirect."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
 def _http_json(
     method: str, url: str, *, token: str, body: dict[str, Any] | None = None,
     timeout: float = 15.0,
 ) -> tuple[int, dict[str, Any]]:
+    try:
+        parsed = urlparse(url)
+        if parsed.path not in {
+            "/v1/ai-readers/pairings/claim", "/v1/read/ai/context", "/v1/read/ai/updates",
+        }:
+            raise LifeLinkMCPError("invalid_endpoint", "Life Link request endpoint is invalid")
+        _validate_https_endpoint(url, parsed.path, allow_query=True)
+    except LifeLinkMCPError:
+        raise
+    except ValueError as error:
+        raise LifeLinkMCPError("invalid_endpoint", "Life Link request endpoint is invalid") from error
     data = None
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     if body is not None:
@@ -323,7 +424,9 @@ def _http_json(
         headers["Content-Type"] = "application/json; charset=utf-8"
     request = Request(url, data=data, headers=headers, method=method)
     try:
-        with urlopen(request, timeout=timeout) as response:
+        # urllib follows redirects by default, including when Authorization is set.
+        # A redirect therefore must be surfaced as its own failed response.
+        with build_opener(_NoRedirectHandler()).open(request, timeout=timeout) as response:
             status = int(response.status)
             raw = response.read()
     except HTTPError as error:
@@ -411,23 +514,28 @@ class LifeLinkReader:
         if status != 200:
             error_code = str(profile.get("error") or "pairing_failed")
             raise LifeLinkMCPError(error_code, "Life Link pairing was rejected", http_status=status)
-        required = {"access_token", "reader_id", "expires_at", "context_url"}
+        required = {"access_token", "reader_id", "expires_at", "context_url", "central_instance_id"}
         if not required.issubset(profile) or not all(isinstance(profile[key], str) for key in required):
             raise LifeLinkMCPError("invalid_central_response", "Life Link pairing response is incomplete")
-        context_url = urlparse(str(profile["context_url"]))
-        if (
-            context_url.scheme not in {"http", "https"}
-            or context_url.hostname not in {"127.0.0.1", "::1", "localhost"}
-            or context_url.path != "/v1/read/ai/context"
-            or context_url.username or context_url.password
-            or context_url.query or context_url.fragment
-        ):
-            raise LifeLinkMCPError("invalid_central_response", "Life Link context endpoint is invalid")
+        if profile.get("central_instance_id") != pairing["central_instance_id"]:
+            raise LifeLinkMCPError("invalid_central_response", "Life Link central instance does not match this MCP package")
+        try:
+            claim_origin = _validate_https_endpoint(
+                pairing["claim_url"], "/v1/ai-readers/pairings/claim",
+            )
+            context_origin = _validate_https_endpoint(
+                profile["context_url"], "/v1/read/ai/context",
+            )
+        except LifeLinkMCPError as error:
+            raise LifeLinkMCPError("invalid_central_response", "Life Link context endpoint is invalid") from error
+        if context_origin != claim_origin:
+            raise LifeLinkMCPError("invalid_central_response", "Life Link context endpoint origin does not match this MCP package")
         secret = {
             "access_token": profile["access_token"],
             "reader_id": profile["reader_id"],
             "expires_at": profile["expires_at"],
             "context_url": profile["context_url"],
+            "context_origin": context_origin,
             "next_cursor": None,
             "understanding_version": None,
         }

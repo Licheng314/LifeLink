@@ -3,12 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="lifelink-csrf" content="__CSRF_TOKEN__">
+<meta name="lifelink-management" content="central">
 <title>Life Link · 个人数据仪表盘</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script src="https://unpkg.com/lucide@latest"></script>
+<script src="/assets/vendor/chart.umd.min.js"></script>
+<script src="/assets/vendor/lucide.js"></script>
 <link rel="stylesheet" href="/assets/styles/base.css?v=20260829-6">
 <link rel="stylesheet" href="/assets/styles/components.css?v=20260829-1">
 <link rel="stylesheet" href="/assets/styles/wishes-events.css?v=20260831-2">
+<link rel="stylesheet" href="/assets/styles/central-management.css">
 <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
 </head>
 <body>
@@ -47,15 +50,12 @@
       <span class="icon"><i data-lucide="heart-pulse"></i></span><span>健康信息</span>
     </div>
     <div class="sidebar-nav-bottom">
-      <div class="nav-item" data-page="sync">
-        <span class="icon"><i data-lucide="cpu"></i></span><span>设备管理</span>
+      <div class="nav-item" data-page="central-management">
+        <span class="icon"><i data-lucide="settings"></i></span><span>中央管理</span>
       </div>
     </div>
   </div>
   <div class="sidebar-data-size"><span id="calendar-day-size" class="calendar-day-size">当日数据量：--</span></div>
-  <div class="sidebar-footer">
-    <span class="server-label">服务器连接：</span><span class="device-status" id="sidebar-server-status"><span id="sidebar-server-text">连接中…</span></span>
-  </div>
 </nav>
 
 <!-- Main Content -->
@@ -109,8 +109,8 @@
       <div class="event-timeline-heading">
         <h3><i data-lucide="scroll-text"></i> 今日时间线</h3>
         <div class="event-timeline-actions">
-          <button type="button" id="event-filter-normal" class="event-filter-btn" title="显示/隐藏普通事件" onclick="toggleEventFilter('normal')"><i data-lucide="zap"></i></button>
-          <button type="button" id="event-filter-system" class="event-filter-btn" title="显示/隐藏系统事件" onclick="toggleEventFilter('system')"><i data-lucide="settings"></i></button>
+          <button type="button" id="event-filter-normal" class="event-filter-btn" title="显示/隐藏普通事件"><i data-lucide="zap"></i></button>
+          <button type="button" id="event-filter-system" class="event-filter-btn" title="显示/隐藏系统事件"><i data-lucide="settings"></i></button>
           <button type="button" id="ai-progress-clear-top" hidden>清理访问标记</button>
           <span class="event-content-actions"><button type="button" id="event-settings-open">报告设置</button><button type="button" id="ai-context-preview">查看发送原文</button></span>
         </div>
@@ -234,45 +234,62 @@
     </div>
   </div>
 
-  <!-- ============ 设备管理 ============ -->
-  <div class="page" id="page-sync">
+  <!-- ============ 中央管理 ============ -->
+  <div class="page" id="page-central-management">
     <div class="page-header">
-      <h2><i data-lucide="cpu"></i> 设备管理</h2>
-      <div class="desc">查看当前设备、设置中央自定义名称，或删除不再使用的设备。删除不会清除已上传的历史数据。</div>
+      <h2><i data-lucide="settings"></i> 中央管理</h2>
+      <div class="desc">管理已连接设备、网络与其他中央设置</div>
     </div>
-
-    <div class="chart-panel device-settings-panel">
-      <h3><i data-lucide="settings"></i> 统计设置</h3>
+    <div class="cards-row" id="sync-device-cards">
+      <div class="stat-card accent"><div class="label">设备</div><div class="value">检测中...</div><div class="sub">正在读取中央设备名册</div></div>
+    </div>
+    <div class="central-device-divider" aria-hidden="true"></div>
+    <section class="chart-panel">
+      <h3><i data-lucide="network"></i> 网络配置</h3>
+      <p id="central-network-summary" class="event-muted">正在读取中央连接状态…</p>
+      <div class="device-setting-row">
+        <label for="central-provider">连接方式</label>
+        <select id="central-provider"><option value="public_domain">公网服务器 / 域名</option><option value="tailscale">Tailscale</option><option value="https_tunnel">HTTPS 内网穿透</option></select>
+      </div>
+      <div class="device-setting-row">
+        <label for="central-base-url">外部 HTTPS 地址</label>
+        <input id="central-base-url" type="url" placeholder="https://life.example.com" autocomplete="url">
+      </div>
+      <div class="central-management-actions"><button type="button" class="central-action primary" id="central-verify-network">验证并保存</button><button type="button" class="central-action secondary" id="central-detect-tailscale">自动检测 Tailscale</button></div>
+      <p id="central-network-feedback" class="event-muted" aria-live="polite"></p>
+    </section>
+    <section class="chart-panel">
+      <h3><i data-lucide="key-round"></i> 设备配对</h3>
+      <p class="event-muted">先完成外部 HTTPS 地址验证，再生成一次性 PC 或 Android 邀请码。</p>
+      <button type="button" class="central-action primary" id="central-create-invitation">生成设备配对码</button>
+      <pre id="central-invitation" class="central-management-output" aria-live="polite"></pre>
+    </section>
+    <section class="chart-panel">
+      <h3><i data-lucide="settings-2"></i> 其他设置</h3>
+      <label class="device-setting-row compact-toggle-row" for="central-login-startup">
+        <span>开机启动</span>
+        <input id="central-login-startup" type="checkbox" disabled>
+        <span id="central-login-startup-status" class="device-setting-hint">正在读取 Windows 启动设置…</span>
+      </label>
       <label class="device-setting-row" for="day-boundary-hour">
         <span>跨日时间</span>
         <select id="day-boundary-hour"></select>
         <span class="device-setting-hint">应用用量和业务日从这个整点开始计算</span>
       </label>
-      <label class="device-setting-row" for="pc-login-startup">
-        <span>登录后自动启动</span>
-        <input id="pc-login-startup" type="checkbox" />
-        <span class="device-setting-hint" id="pc-login-startup-status">登录 Windows 后静默启动 PC 客户端</span>
-      </label>
-    </div>
-
-    <div class="cards-row" id="sync-device-cards">
-      <div class="stat-card accent">
-        <div class="label">本机</div>
-        <div class="value">检测中...</div>
-        <div class="sub">正在读取同步服务状态</div>
-      </div>
-    </div>
+    </section>
   </div>
 
 </div>
 
-<script src="/assets/scripts/wishes-events.js?v=20260831-2"></script>
+<script src="/assets/scripts/wishes-events.js?v=20260905-1"></script>
 <script src="/assets/scripts/shared-ui.js?v=20260830-1"></script>
 <script src="/assets/scripts/usage.js?v=20260829-3"></script>
 <script src="/assets/scripts/health-info.js?v=20260829-1"></script>
 <script src="/assets/scripts/devices.js?v=20260902-1"></script>
 <script src="/assets/vendor/leaflet/leaflet.js"></script>
+<script src="/assets/scripts/central-bridge.js"></script>
 <script src="/assets/scripts/location.js?v=20260829-4"></script>
 <script src="/assets/scripts/app.js?v=20260829-2"></script>
+<script src="/assets/scripts/central-management.js"></script>
 </body>
 </html>

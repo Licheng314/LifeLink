@@ -1,5 +1,6 @@
 let activityCanvasResizeHandler = null;
 let activityChartHits = [];
+let locationLoadGeneration = 0;
 const ACTIVITY_META = {
   stationary: { label: '静止', color: '#4caf50' }, walking: { label: '步行', color: '#f3c43b' },
   running: { label: '跑步', color: '#f28c28' }, transport: { label: '交通工具', color: '#4385d1' },
@@ -145,9 +146,13 @@ function renderLocationSummary(data) {
 }
 
 async function loadLocationSummary() {
+  const generation = ++locationLoadGeneration;
   await ensureMultiDeviceSnapshot(); const date = typeof getSelectedBusinessDate === 'function' ? getSelectedBusinessDate() : '';
   const response = await fetch(`/api/locations${date ? `?date=${encodeURIComponent(date)}` : ''}`);
-  if (!response.ok) throw new Error(`位置数据加载失败：HTTP ${response.status}`); renderLocationSummary(await response.json());
+  if (!response.ok) throw new Error(`位置数据加载失败：HTTP ${response.status}`);
+  const data = await response.json();
+  if (generation !== locationLoadGeneration) return;
+  renderLocationSummary(data);
 }
 function usageMetric(device, categoryDevice) {
   const source = device.device_key === 'all' ? multiDeviceState.usage?.all : categoryDevice;
@@ -282,8 +287,16 @@ function renderLocationMap(data) {
   }
   locationMapInstance = L.map(container, { zoomControl: true, attributionControl: true }).setView([29.56, 106.55], 12);
 
-  L.tileLayer('/map-tiles/vec/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '天地图' }).addTo(locationMapInstance);
-  L.tileLayer('/map-tiles/cva/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(locationMapInstance);
+  const baseTiles = L.tileLayer('/map-tiles/vec/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '天地图', updateWhenIdle: true });
+  const labelsTiles = L.tileLayer('/map-tiles/cva/{z}/{x}/{y}.png', { maxZoom: 18, updateWhenIdle: true });
+  let pendingTileLayers = 0;
+  const setTileLoading = (loading) => container.classList.toggle('location-map-loading', loading);
+  [baseTiles, labelsTiles].forEach(layer => {
+    layer.on('loading', () => { pendingTileLayers += 1; setTileLoading(true); });
+    layer.on('load', () => { pendingTileLayers = Math.max(0, pendingTileLayers - 1); if (!pendingTileLayers) setTileLoading(false); });
+    layer.on('tileerror', () => setTileLoading(false));
+    layer.addTo(locationMapInstance);
+  });
 
   const bounds = L.latLngBounds([]);
   const tz = data.timezone || 'Asia/Shanghai';
@@ -386,8 +399,14 @@ function renderLocationMap(data) {
       <span class="lm-legend-item"><span style="width:22px;height:14px;background:#1d4ed8;border-radius:50%;display:inline-block"></span>停留点（越大越久）</span>`;
   }
 
-  // 修复 Leaflet 在隐藏容器中初始化的尺寸问题
-  setTimeout(() => { if (locationMapInstance) locationMapInstance.invalidateSize(); }, 200);
+  // The page can still be settling from display:none to display:block when
+  // the location request returns.  Recheck after layout and after tile work,
+  // otherwise Leaflet may keep a zero-sized viewport until a manual refresh.
+  const map = locationMapInstance;
+  const refreshMapSize = () => { if (locationMapInstance === map) map.invalidateSize({ animate: false }); };
+  requestAnimationFrame(refreshMapSize);
+  setTimeout(refreshMapSize, 200);
+  setTimeout(refreshMapSize, 800);
 }
 
 // ============================================================

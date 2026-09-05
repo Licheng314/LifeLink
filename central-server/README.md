@@ -38,9 +38,9 @@
 
 ### 独立启动中央服务端
 
-双击 `start_server.bat`。它只启动中央长期库和“Life Link 中央服务端”托盘图标，不启动 PC 采集、WebUI 或用时窗口。首次运行会在 `%USERPROFILE%\LifeLink\central` 创建必要配置与运行数据，并从默认 `127.0.0.1:8091` 开始选择可用端口；端口一旦写入配置，托盘、诊断和 Tailscale 都读取同一值。源码首次启动还会检查 Python 3.13（含 Tkinter）；缺失时询问用户是否通过 Windows `winget` 安装。若本模块的正式启动器尚不存在，会在 `%USERPROFILE%\LifeLink\tools\build-python` 安装仅用于构建的 PyInstaller，并生成 `central-server/LifeLink Central Service.exe`；启动器生成或确认存在后立即登记为当前用户登录后自动启动。MCP EXE 不在此时构建。每次手动运行 BAT 都会在中央服务就绪后显示远程连接检查菜单；已有地址默认保留，没有地址时必须配置 Tailscale 或 HTTPS。直接运行 EXE 和登录后自动启动保持静默。完整流程见根目录 [`README.md`](../README.md)。
+双击 `start_server.bat`。它启动中央长期库、固定绑定 `127.0.0.1:8092` 的本机管理 WebUI，以及“Life Link 中央服务端”托盘；不启动 PC 采集、PC 数据展示 WebUI 或用时窗口。首次运行会在 `%USERPROFILE%\LifeLink\central` 创建必要配置与运行数据，中央数据 API 默认使用 `127.0.0.1:8091`，冲突时按首次启动流程选择并持久化其他端口。源码首次启动复用已验证的 Python 3.14 或 3.13（优先 3.14），不再要求 Tkinter；两者都没有时才询问是否安装 3.14。首次启动、生成的源码启动器和登录启动使用同一选择规则。若正式启动器不存在，会在隔离构建环境生成 `central-server/LifeLink Central Service.exe`，随后登记为当前用户登录后自动启动。启动成功后首次向导打开 `http://127.0.0.1:8092`，网络可以暂不配置，但远程设备不可用。完整流程见根目录 [`README.md`](../README.md)。
 
-托盘使用 Windows 默认“信息”图标，与 PC 客户端的默认应用图标区分。左键打开本地健康状态；右键提供打开服务状态、生成设备配对码、生成 AI 配对包、重启和退出中央服务。“生成 AI 配对包”调用本机 PC 服务的现役打包入口，由它统一签发一次性 AI 配对、装入 MCP EXE 与 Skill、替换旧导出包并打开其中的最新 ZIP；将该压缩包发送给目标 AI 即可继续连接。PC 客户端未运行时会明确失败，不在中央托盘中复制裸 AI 配对文本。AI 读取状态仍只在 PC WebUI 管理。退出中央托盘不会关闭 `pc-dashboard` 客户端。
+托盘是纯 Windows 生命周期外壳，使用原生消息循环和消息框，不依赖 Tkinter。左键打开中央管理 WebUI；右键菜单严格只有“打开 WebUI、重启服务器、关闭服务器”。设备配对、AI 配对和网络配置全部归中央管理 WebUI；AI 包由中央直接生成并由浏览器下载，不依赖 `pc-dashboard`。关闭中央托盘只关闭其拥有的中央子进程，不关闭 `pc-dashboard` 客户端。
 
 中央服务的启动项直接指向带图标的 `LifeLink Central Service.exe`，不以“终端”、Python 或脚本宿主名义出现。源码检出使用本模块根目录 `central-server/LifeLink Central Service.exe`：它只是中央服务自己的小型入口，按自身位置启动同项目的 `central_server_app.py`，不打包中央服务本体。使用 `development/tools/build_source_launchers.ps1` 构建；项目移动后手动启动一次中央源码即可刷新启动项路径。发行包则直接指向其自身的正式 EXE。
 
@@ -50,7 +50,7 @@
 
 远端 PC 不再复制中央主机配置，也不与其他 PC 互相发现。首选流程是：
 
-1. 中央主机右键“Life Link 中央服务端”托盘图标，选择“生成设备配对码”；它会生成并自动复制一段以 `LR1.` 开头、24 小时过期且只能领取一次的统一设备邀请文本。`maintenance/create_invitation.bat` 保留为命令行恢复入口，PC 与手机使用同一配对码、同一权限口径。
+1. 在中央主机从托盘打开管理 WebUI，选择“生成设备配对码”；它会生成并尝试复制一段以 `LR1.` 开头、24 小时过期且只能领取一次的统一设备邀请文本。`maintenance/create_invitation.bat` 保留为命令行恢复入口，PC 与手机使用同一配对码、同一权限口径。
 2. 远端 PC 双击 `start_central_client.bat`；尚未配置时会打开本机设置页，将整段邀请粘贴进去并确认。
 3. 远端 PC 直接通过邀请中的 HTTPS 地址向中央领取自己的稳定 profile，随后安全写入 `%USERPROFILE%\LifeLink\client\config.json` 并启动客户端。
 
@@ -89,7 +89,7 @@ PC 新事件使用来源无关的 `app.foreground`、`device.input_state` 和 `w
 
 ### AI reader 被动只读接入（v1.15.3）
 
-中央服务托盘通过本机 PC 服务生成完整 MCP 连接包；WebUI 保留原“生成 AI 配对文本”的兼容实现，但隐藏其按钮，正常用户入口统一为 MCP 连接包。包内一次性配对信息有效 24 小时且只能领取一次。AI/Agent 在 loopback 调用 `POST /v1/ai-readers/pairings/claim` 后只会收到一次 90 天 AI 专用只读 Token，随后通过 `GET /v1/read/ai/context` 获取完整背景、增量时间线和版本化理解说明。该 Token 不具备上传、普通中央读取或管理权限，SQLite 只保存其 SHA-256。
+中央管理 WebUI 在已验证的 HTTPS 地址上直接生成完整 MCP 连接 ZIP，浏览器下载；PC 数据展示 WebUI 的旧裸配对文本仅兼容保留并隐藏。包内一次性配对信息有效 24 小时且只能领取一次。AI/Agent 在自己的 Windows、Linux 或 Docker 主机上以 Python stdio 运行包内 MCP，通过 HTTPS 调用 `POST /v1/ai-readers/pairings/claim` 后只会收到一次 90 天 AI 专用只读 Token，随后通过 HTTPS `GET /v1/read/ai/context` 获取完整背景、增量时间线和版本化理解说明。该 Token 不具备上传、普通中央读取或管理权限，SQLite 只保存其 SHA-256。正式路径不接受 HTTP、loopback、证书失败或携带 Token 的重定向；8092 管理页绝不公开。
 
 默认 `GET /v1/read/ai/context` 即返回 compact：元数据后先给出理解说明，再将背景和当前状态压成文字，事件只保留本地时间、重要程度和正文，不传事件 ID/key/内部 evidence；报告仍使用完整冻结正文。需要完整结构时显式使用 `?view=full`。`GET /v1/read/ai/updates` 是无正文、无游标推进的轻量检查：当前业务日存在 reader 游标之后产生的高优先级提醒、报告或心愿/触发器关联事件时返回 `update_mcp=true`。
 
@@ -97,7 +97,7 @@ WebUI 已内置 MCP 连接包入口、reader 状态、最近一次访问、Skill
 
 个人模式只保持一个有效 AI reader；新身份领取会撤销旧 Token，历史记录保留审计。时间线会动态标出当前 AI 是否已获得普通/高优先级事件；所有低优先级事件都不提供给 AI，也不参与读取标记。AI 连接和访问会生成低优先级灰色审计事件。当前仅提供由 AI 轮询的轻量更新标志，不包含服务端主动推送、Webhook、会话注入或 AI 写入。用户已完成真实 AI 配对和读取验收。活动状态由中央按分钟执行步数与定位双来源证据门槛，过滤结果同时供位置视图和 AI 背景使用。
 
-管理端 `GET /v1/ai-readers/{reader_id}/process-status` 仅向注册设备返回当前 Reader 的同机应用检测结果。新 claim 可选提供稳定 `process_binding`：原生应用使用精确 `.exe` 文件名；共享宿主应用使用精确宿主文件名和连续参数路径段。OpenClaw 使用 `node.exe + node_modules/openclaw`，不保存完整绝对路径、PID、启动时间或命令行。只有 `process_running=true` 才在 WebUI 显示绿色提示；该状态不影响 Token 有效性，也不引入心跳或主动投递。
+管理端 `GET /v1/ai-readers/{reader_id}/process-status` 仍可向注册设备返回当前 Reader 的同机应用检测结果。新 claim 可选提供稳定 `process_binding`：原生应用使用精确 `.exe` 文件名；共享宿主应用使用精确宿主文件名和连续参数路径段。OpenClaw 使用 `node.exe + node_modules/openclaw`，不保存完整绝对路径、PID、启动时间或命令行。中央 WebUI 不将远端 AI 主机的进程状态误作中央可验证事实，而是在有效 AI 最近 30 分钟存在 MCP 读取访问时亮绿灯并显示“AI X 分钟前访问过”；该状态不影响 Token 有效性，也不引入心跳或主动投递。
 
 ## 心愿、时间线与触发器（v1.13.1；基础生命周期自 v1.12.0）
 
@@ -169,13 +169,13 @@ Android 与 PC 使用同一套 `LR1` 邀请和设备权限口径。真实手机�
 
 `token_bindings` 的 JSON 结构是 `{ "高熵令牌": "稳定设备 ID" }`。配置加载会拒绝少于 32 字符、包含空白或明显低熵的令牌。
 
-## 花生壳固定公网入口
+## 外部 HTTPS 入口
 
-花生壳映射必须指向中央服务 `127.0.0.1:<配置端口>`，不能指向 PC Dashboard 的 `8090`。Dashboard 只应在本机打开。与中央服务同机运行的 PC 客户端可使用相同配置端口的回环地址；手机、远程 PC 和远程 AI 使用中央 `config.json` 中 `public_endpoint.base_url` 的 HTTPS 地址。初始化向导不提供仅本机模式。
+公网域名反向代理、Tailscale Serve 或花生壳等穿透都必须指向中央数据服务 `127.0.0.1:<配置端口>`，不能指向 PC Dashboard 的 `8090`，也不能指向中央管理 WebUI 的 `8092`。与中央服务同机运行的 PC 客户端使用相同配置端口的回环地址；手机、远程 PC 和所有正式 AI MCP 使用中央 `config.json` 中已验证的 `public_endpoint.base_url` HTTPS 地址。外部地址可暂时未配置，此时远程能力与 AI MCP 配对包均不可用。
 
-先双击 `start_server.bat` 启动中央服务，再双击 `maintenance/configure_public_endpoint.bat` 并粘贴花生壳 HTTPS 地址。配置工具会同时验证：公网可达、`role=central`、只读令牌可用。验证成功后只保存服务商、公开地址和验证时间，不复制或保存任何新令牌。
+先双击 `start_server.bat` 启动中央服务，再从托盘打开 `http://127.0.0.1:8092`。在网络配置中选择公网服务器/域名、Tailscale 或 HTTPS 内网穿透，粘贴最终 HTTPS 地址并验证。成功后保存连接类型、公开地址、验证时间和中央实例身份；失败保留原地址。反向代理必须保留 Authorization 但在日志中脱敏，且不得让 Token 请求跟随重定向。`maintenance/configure_public_endpoint.bat` 仅作为命令行恢复入口。
 
-如需在同一 Tailnet 内私密访问，手动 BAT 的连接菜单会按中央配置端口创建或刷新独立的 `8443 -> 127.0.0.1:<配置端口>` Tailscale HTTPS 转发，并登记 `https://<设备名>.<tailnet>.ts.net:8443`；若 8443 已被其他服务使用，会停止而不覆盖。独立的 `maintenance/configure_tailscale_endpoint.bat` 保留为恢复入口，不触碰其他应用占用的根地址 443。
+如需在同一 Tailnet 内私密访问，可在管理 WebUI 选择“自动检测 Tailscale”。它仅检查安装、登录和当前设备 DNS 名称，并把 `https://<设备名>.<tailnet>.ts.net:8443` 候选地址填入文本框；不会创建或修改 Serve 规则、不会验证，也不会保存或覆盖现有地址。请先自行让 Tailscale Serve 转发到 `127.0.0.1:<中央数据端口>`，再点击“验证并保存”。`maintenance/configure_tailscale_endpoint.bat` 保留为恢复入口，也可以手动填写已有地址。
 
 2026-08-01 已使用花生壳固定地址完成真实公网验收：匿名读取和上传均返回 401；自动生成的独立只读令牌可以读取中央数据；本机设备令牌成功写入一条 `central.public_endpoint_verified` 诊断事件，并收到 1 条确认、0 条拒绝的逐事件 ACK。
 

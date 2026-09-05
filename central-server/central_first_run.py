@@ -9,32 +9,38 @@ import socket
 import subprocess
 import sys
 import time
+import webbrowser
 from pathlib import Path
 from typing import Callable, Sequence
+from urllib.request import ProxyHandler, build_opener
 
-from central.config import CentralConfig, default_config_path, default_data_dir
+from central.bootstrap import ensure_server_configuration
+from central.config import default_config_path, default_data_dir
 from central.operations import _secure_atomic_write_json
-from central.storage import CentralStore
-from central_endpoint import (
-    EndpointError,
-    default_endpoint_path,
-    load_endpoint,
-    probe_endpoint,
-    read_token,
-    save_endpoint,
-)
-from central_invitation import copy_to_clipboard, create_client_invitation
-from central_server_app import ensure_server_configuration, health_is_ready
-from configure_tailscale_endpoint import TailscaleSetupError, configure as configure_tailscale
 
 
-SETUP_VERSION = 1
 DEFAULT_PORT = 8091
+MANAGEMENT_PORT = 8092
+MANAGEMENT_URL = f"http://127.0.0.1:{MANAGEMENT_PORT}"
 PORT_SEARCH_LIMIT = 100
 
 
 class SetupError(RuntimeError):
     pass
+
+
+def central_is_ready(port: int, timeout: float = 1.0) -> bool:
+    opener = build_opener(ProxyHandler({}))
+    try:
+        with opener.open(f"http://127.0.0.1:{port}/v1/health", timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return (
+            isinstance(payload, dict)
+            and payload.get("status") == "ok"
+            and payload.get("role") == "central"
+        )
+    except Exception:
+        return False
 
 
 def _read_object(path: Path) -> dict[str, object]:
@@ -49,14 +55,9 @@ def _read_object(path: Path) -> dict[str, object]:
     return payload
 
 
-def setup_complete(payload: dict[str, object]) -> bool:
-    setup = payload.get("setup")
-    return isinstance(setup, dict) and int(setup.get("version") or 0) >= SETUP_VERSION
-
-
 def port_state(port: int) -> str:
     """Return central, occupied, or free without modifying the listener."""
-    if health_is_ready(port=port):
+    if central_is_ready(port):
         return "central"
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -90,7 +91,7 @@ def select_central_port(
         return replacement, True
     print(f"端口 {configured} 已被其他程序占用，可用端口为 {replacement}。")
     answer = ask(
-        f"切换中央服务到 {replacement} 吗？已有花生壳映射也需要改为该端口。[Y/n] "
+        f"切换中央服务到 {replacement} 吗？已有外部 HTTPS 转发也需要改为该端口。[Y/n] "
     ).strip()
     if answer.lower().startswith("n"):
         raise SetupError("端口冲突尚未解决，中央服务没有启动。")
@@ -117,17 +118,34 @@ def _update_local_pc_endpoint(previous_port: int, new_port: int) -> bool:
     return True
 
 
+def management_is_ready(timeout: float = 1.0) -> bool:
+    opener = build_opener(ProxyHandler({}))
+    try:
+        with opener.open(f"{MANAGEMENT_URL}/api/status", timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return (
+            isinstance(payload, dict)
+            and payload.get("status") == "ok"
+            and payload.get("role") == "life-link-central-management"
+        )
+    except Exception:
+        return False
+
+
 def _wait_for_central(port: int, timeout: float = 25) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if health_is_ready(port=port):
+        if central_is_ready(port) and management_is_ready():
             return
         time.sleep(0.25)
-    raise SetupError(f"中央服务未能在 {timeout:.0f} 秒内监听 127.0.0.1:{port}。")
+    raise SetupError(
+        f"中央服务未能在 {timeout:.0f} 秒内同时准备数据端口 "
+        f"127.0.0.1:{port} 和管理端口 127.0.0.1:{MANAGEMENT_PORT}。"
+    )
 
 
 def _start_launcher(launcher: Path, port: int) -> None:
-    if health_is_ready(port=port):
+    if central_is_ready(port) and management_is_ready():
         print(f"中央服务已在 127.0.0.1:{port} 运行，直接复用。")
         return
     if not launcher.is_file():
@@ -141,100 +159,6 @@ def _start_launcher(launcher: Path, port: int) -> None:
     print(f"中央服务已启动：127.0.0.1:{port}")
 
 
-def _existing_endpoint() -> str | None:
-    try:
-        return str(load_endpoint(default_endpoint_path())["base_url"])
-    except (EndpointError, ValueError):
-        return None
-
-
-def configure_connection(
-    port: int,
-    *,
-    ask: Callable[[str], str] = input,
-    force_reconfigure: bool = False,
-    previous_port: int | None = None,
-    previous_provider: str | None = None,
-) -> tuple[str, str]:
-    existing = _existing_endpoint()
-    while True:
-        can_keep = bool(existing) and not force_reconfigure
-        print("\n请检查远程连接：")
-        if can_keep:
-            print(f"  当前地址：{existing}")
-            print("  1. 保持当前配置并继续（默认）")
-            print("  2. 配置或刷新 Tailscale")
-            print("  3. 配置花生壳或其他 HTTPS")
-            choice = ask("请输入 1、2 或 3，直接回车保持当前配置：").strip()
-            if choice in {"", "1"}:
-                return previous_provider or "existing", existing
-            tailscale_choice, https_choice = "2", "3"
-        else:
-            if force_reconfigure and existing:
-                print("中央端口已变化，原远程入口需要重新配置。")
-            else:
-                print("当前没有可用的远程地址。")
-            print("  1. Tailscale（推荐，需已安装并登录）")
-            print("  2. 花生壳或其他 HTTPS 内网穿透")
-            choice = ask("请输入 1 或 2：").strip()
-            tailscale_choice, https_choice = "1", "2"
-
-        if choice == tailscale_choice:
-            try:
-                replace_port = (
-                    previous_port
-                    if force_reconfigure and previous_provider == "tailscale"
-                    else None
-                )
-                return "tailscale", configure_tailscale(
-                    central_port=port, previous_central_port=replace_port,
-                )
-            except TailscaleSetupError as error:
-                print(f"Tailscale 配置失败：{error}")
-                print("已保留原配置，请重新选择连接方式。")
-        elif choice == https_choice:
-            print("\n请先在内网穿透的基础设置中填写：")
-            print("  内网主机：127.0.0.1")
-            print(f"  内网端口：{port}")
-            print("  协议：HTTPS")
-            url = ask("建立映射后，请粘贴获得的 HTTPS 根地址：").strip()
-            try:
-                report = probe_endpoint(url, read_token(default_config_path()), timeout=15)
-                save_endpoint(default_endpoint_path(), "peanuthull", str(report["base_url"]))
-                return "https_tunnel", str(report["base_url"])
-            except (EndpointError, ValueError) as error:
-                print(f"地址验证失败：{error}")
-                print("已保留原配置，请重新选择连接方式。")
-        else:
-            print("请输入菜单中的有效选项。")
-
-
-def _paired_device_count(config: CentralConfig) -> int:
-    return len(CentralStore(config.database_path, config.token_bindings).list_managed_devices())
-
-
-def _offer_first_invitation(config: CentralConfig, base_url: str) -> None:
-    if _paired_device_count(config) > 0:
-        print("已发现配对设备，不再生成新的设备配对码。")
-        return
-    created = create_client_invitation(
-        config_path=default_config_path(), endpoint_path=default_endpoint_path(),
-        central_base_url=base_url,
-    )
-    copied = copy_to_clipboard(created.code)
-    print("\n尚未发现配对设备，已生成一次设备配对码：")
-    print(created.code)
-    if copied:
-        print("配对码也已复制到剪贴板。")
-    print("启动 PC 客户端后，由客户端页面提示你粘贴配对码。")
-
-
-def _mark_complete(path: Path, payload: dict[str, object], remote_mode: str) -> None:
-    updated = dict(payload)
-    updated["setup"] = {"version": SETUP_VERSION, "remote_mode": remote_mode}
-    _secure_atomic_write_json(path, updated)
-
-
 def run(launcher: Path, *, ask: Callable[[str], str] = input) -> int:
     config_path = default_config_path().expanduser().resolve()
     before = _read_object(config_path)
@@ -242,12 +166,6 @@ def run(launcher: Path, *, ask: Callable[[str], str] = input) -> int:
         previous_port = int(before.get("port") or DEFAULT_PORT)
     except (TypeError, ValueError):
         previous_port = DEFAULT_PORT
-    endpoint_payload = before.get("public_endpoint")
-    previous_provider = (
-        str(endpoint_payload.get("provider"))
-        if isinstance(endpoint_payload, dict) and endpoint_payload.get("provider")
-        else None
-    )
     port, changed = select_central_port(before, ask=ask)
     ensured = ensure_server_configuration(config_path=config_path, port=port)
     current = _read_object(ensured)
@@ -258,26 +176,15 @@ def run(launcher: Path, *, ask: Callable[[str], str] = input) -> int:
         current = _read_object(ensured)
 
     _start_launcher(launcher.expanduser().resolve(), port)
-    was_complete = setup_complete(current)
-    config = CentralConfig.from_environment({"LIFE_RADIO_CENTRAL_CONFIG": str(ensured)})
     if changed and before:
-        print("\n中央端口已变化，需要重新确认远程连接。")
-    elif was_complete:
-        print("\n中央服务已就绪，请检查远程连接设置。")
+        print("\n中央端口已变化，请在管理 WebUI 中重新验证外部 HTTPS 地址。")
     else:
-        print("\n首次运行：中央服务本机部分已经就绪。")
-    remote_mode, pairing_base_url = configure_connection(
-        port,
-        ask=ask,
-        force_reconfigure=changed and bool(before),
-        previous_port=previous_port,
-        previous_provider=previous_provider,
-    )
-    if not was_complete:
-        _offer_first_invitation(config, pairing_base_url)
-    current = _read_object(ensured)
-    _mark_complete(ensured, current, remote_mode)
-    print("\n远程连接检查完成。" if was_complete else "\n首次设置完成。")
+        print("\n中央服务本机部分已经就绪。")
+    if not webbrowser.open(MANAGEMENT_URL):
+        print(f"请手动打开中央管理 WebUI：{MANAGEMENT_URL}")
+    else:
+        print(f"中央管理 WebUI：{MANAGEMENT_URL}")
+    print("请在 WebUI 中配置并验证网络地址，再生成设备或 AI 配对材料。")
     print("日常启动可直接运行本目录中的 LifeLink Central Service.exe。")
     print(f"用户数据保存在：{default_data_dir().parent}")
     print("如果要让 AI 定时读取，请在完成 AI 配对后，由 AI 工具建立定时调用。")

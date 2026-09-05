@@ -56,25 +56,6 @@ MAX_EVENTS_PER_BATCH = 500
 BASE_DIR = resource_dir()
 INSTALLATION_DIR = installation_dir()
 DATA_DIR = default_client_data_dir() / "data"
-DASHBOARD_FILE = BASE_DIR / "dashboard.html"
-WEB_ASSET_DIR = BASE_DIR / "web"
-WEB_ASSETS: dict[str, tuple[Path, str]] = {
-    "/assets/images/life-link-logo.png": (WEB_ASSET_DIR / "assets" / "life-link-logo.png", "image/png"),
-    "/assets/styles/base.css": (WEB_ASSET_DIR / "styles" / "base.css", "text/css; charset=utf-8"),
-    "/assets/styles/components.css": (WEB_ASSET_DIR / "styles" / "components.css", "text/css; charset=utf-8"),
-    "/assets/styles/wishes-events.css": (WEB_ASSET_DIR / "styles" / "wishes-events.css", "text/css; charset=utf-8"),
-    "/assets/styles/tools.css": (WEB_ASSET_DIR / "styles" / "tools.css", "text/css; charset=utf-8"),
-    "/assets/scripts/shared-ui.js": (WEB_ASSET_DIR / "scripts" / "shared-ui.js", "text/javascript; charset=utf-8"),
-    "/assets/scripts/wishes-events.js": (WEB_ASSET_DIR / "scripts" / "wishes-events.js", "text/javascript; charset=utf-8"),
-    "/assets/scripts/usage.js": (WEB_ASSET_DIR / "scripts" / "usage.js", "text/javascript; charset=utf-8"),
-    "/assets/scripts/health-info.js": (WEB_ASSET_DIR / "scripts" / "health-info.js", "text/javascript; charset=utf-8"),
-    "/assets/scripts/devices.js": (WEB_ASSET_DIR / "scripts" / "devices.js", "text/javascript; charset=utf-8"),
-    "/assets/scripts/location.js": (WEB_ASSET_DIR / "scripts" / "location.js", "text/javascript; charset=utf-8"),
-    "/assets/scripts/app.js": (WEB_ASSET_DIR / "scripts" / "app.js", "text/javascript; charset=utf-8"),
-    "/assets/scripts/tools.js": (WEB_ASSET_DIR / "scripts" / "tools.js", "text/javascript; charset=utf-8"),
-    "/assets/vendor/leaflet/leaflet.css": (WEB_ASSET_DIR / "vendor" / "leaflet" / "leaflet.css", "text/css; charset=utf-8"),
-    "/assets/vendor/leaflet/leaflet.js": (WEB_ASSET_DIR / "vendor" / "leaflet" / "leaflet.js", "text/javascript; charset=utf-8"),
-}
 EVENT_FILE_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2})\.json$")
 SHARED_SETTINGS_CACHE_FILENAME = "shared_settings_cache.json"
 V17_READ_CACHE_FILENAME = "v17_read_cache.json"
@@ -3347,11 +3328,14 @@ class SyncHandler(BaseHTTPRequestHandler):
         # ---- Event triggers (read) ----
         elif parsed.path == "/api/event-triggers":
             self._proxy_central_get("/v1/event-triggers")
-        elif parsed.path in WEB_ASSETS:
-            asset_path, content_type = WEB_ASSETS[parsed.path]
-            self.send_file(asset_path, content_type)
         elif parsed.path in {"/", "/dashboard.html"}:
-            self.send_file(DASHBOARD_FILE, "text/html; charset=utf-8")
+            # The complete Dashboard now lives on the central HTTPS WebUI.
+            # This loopback service remains only for PC collection, upload,
+            # browser-plugin compatibility and the native status window.
+            self.send_json(410, {
+                "error": "pc_dashboard_retired",
+                "message": "PC Dashboard 已迁移至中央 HTTPS WebUI；请从 Life Link 托盘打开 Dashboard。",
+            })
         else:
             self.send_error(404, "Not found")
 
@@ -3461,6 +3445,7 @@ class SyncHandler(BaseHTTPRequestHandler):
             else:
                 self.send_json(201, {
                     "filename": exported_path.name,
+                    "path": str(exported_path),
                     "expires_at": pairing_payload.get("expires_at"),
                 })
         elif (path_match := _match_path(path, r"^/api/ai-readers/([^/]+)/clear-reading-progress$")):

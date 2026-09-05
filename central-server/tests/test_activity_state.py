@@ -101,6 +101,19 @@ class ActivityStateTests(unittest.TestCase):
         self.assertEqual(walking[0]["end_at"], "2026-08-13T20:02:00Z")
         self.assertEqual(walking[1]["start_at"], "2026-08-13T20:03:00Z")
 
+    def test_short_running_segment_is_presented_as_walking(self):
+        session = "00000000-0000-4000-8000-000000000006"
+        self.add("s1", "phone-a", "2026-08-13T20:00:00Z", "health.steps_observation", {"counter_value": 0, "counter_session_id": session})
+        self.add("s2", "phone-a", "2026-08-13T20:10:00Z", "health.steps_observation", {"counter_value": 1200, "counter_session_id": session})
+        self.add("l1", "phone-a", "2026-08-13T20:00:00Z", "location.observation", {"latitude": 29.5, "longitude": 106.6, "accuracy_m": 20})
+        self.add("l2", "phone-a", "2026-08-13T20:10:00Z", "location.observation", {"latitude": 29.5, "longitude": 106.6, "accuracy_m": 20})
+
+        result = derive_activity_state(self.connection, self.start, self.end, now=self.end)
+
+        self.assertFalse(any(item["state"] == "running" for item in result["intervals"]))
+        walking = next(item for item in result["intervals"] if item["state"] == "walking")
+        self.assertEqual(walking["duration_seconds"], 10 * 60)
+
     def test_primary_device_is_configured_and_candidates_expose_counts(self):
         result = derive_activity_state(self.connection, self.start, self.end, now=self.end)
         self.assertEqual(result["primary_device_id"], "phone-a")

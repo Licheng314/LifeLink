@@ -1574,8 +1574,11 @@ components:
     AIReaderPairingClaimResponse:
       type: object
       additionalProperties: false
-      required: [access_token, reader_id, expires_at, context_url]
+      required: [central_instance_id, access_token, reader_id, expires_at, context_url]
       properties:
+        central_instance_id:
+          type: string
+          description: Must equal the central_instance_id in the HTTPS connection package. Clients reject a mismatch.
         access_token:
           type: string
           minLength: 32

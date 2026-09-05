@@ -43,6 +43,7 @@ def legacy_config_path(environ: Mapping[str, str] | None = None) -> Path:
 
 
 DEFAULT_DATABASE_PATH = default_data_dir() / "life_radio.sqlite3"
+DEFAULT_TIANDITU_KEY = "dce95eafa58322a32d41814ef8e31d25"
 
 
 def _read_external_config(path: str | None) -> dict[str, object]:
@@ -112,6 +113,7 @@ class CentralConfig:
     media_audio_dir: Path | None = None
     media_incoming_dir: Path | None = None
     media_tool_script: Path | None = None
+    tianditu_key: str = DEFAULT_TIANDITU_KEY
     config_path: Path | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -123,6 +125,8 @@ class CentralConfig:
             raise ValueError("max_body_bytes must be positive")
         if not 1 <= self.max_events_per_batch <= 500:
             raise ValueError("max_events_per_batch must be between 1 and 500")
+        if not isinstance(self.tianditu_key, str) or not self.tianditu_key.strip() or self.tianditu_key != self.tianditu_key.strip():
+            raise ValueError("tianditu_key must be a non-empty string without surrounding whitespace")
         bindings = _token_bindings(dict(self.token_bindings), source="runtime")
         read_token = _read_token(self.read_token, source="runtime")
         if read_token is not None and read_token in bindings:
@@ -186,6 +190,7 @@ class CentralConfig:
         media_audio_dir = _optional_path("LIFE_RADIO_CENTRAL_MEDIA_AUDIO_DIR", "media_audio_dir")
         media_incoming_dir = _optional_path("LIFE_RADIO_CENTRAL_MEDIA_INCOMING_DIR", "media_incoming_dir")
         media_tool_script = _optional_path("LIFE_RADIO_CENTRAL_MEDIA_TOOL_SCRIPT", "media_tool_script")
+        tianditu_key = str(env.get("LIFE_RADIO_TIANDITU_KEY") or external.get("tianditu_key") or DEFAULT_TIANDITU_KEY).strip()
 
         return cls(
             database_path=database_path,
@@ -201,4 +206,5 @@ class CentralConfig:
             media_audio_dir=media_audio_dir,
             media_incoming_dir=media_incoming_dir,
             media_tool_script=media_tool_script,
+            tianditu_key=tianditu_key,
         )

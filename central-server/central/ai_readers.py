@@ -359,19 +359,18 @@ def is_loopback_address(value: str) -> bool:
         return False
 
 
-def normalize_loopback_claim_url(value: str) -> str:
+def normalize_https_claim_url(value: str) -> str:
     parsed = urlsplit(value.strip())
     if (
-        parsed.scheme not in {"http", "https"}
+        parsed.scheme != "https"
         or not parsed.hostname
-        or not is_loopback_address(parsed.hostname)
         or parsed.username
         or parsed.password
         or parsed.path != "/v1/ai-readers/pairings/claim"
         or parsed.query
         or parsed.fragment
     ):
-        raise ValueError("claim_url must be the loopback AI reader claim endpoint")
+        raise ValueError("claim_url must be the verified HTTPS AI reader claim endpoint")
     return urlunsplit((parsed.scheme, parsed.netloc.lower(), parsed.path, "", ""))
 
 
@@ -619,7 +618,7 @@ class AIReaderService:
     ) -> CreatedAIReaderPairing:
         if lifetime.total_seconds() <= 0:
             raise ValueError("pairing lifetime must be positive")
-        normalized_url = normalize_loopback_claim_url(claim_url)
+        normalized_url = normalize_https_claim_url(claim_url)
         stable_instance_id = self.central_instance_id()
         if central_instance_id is not None:
             if (
@@ -864,6 +863,7 @@ class AIReaderService:
             "/v1/ai-readers/pairings/claim"
         ) + "/v1/read/ai/context"
         return {
+            "central_instance_id": pairing["central_instance_id"],
             "access_token": permanent_token,
             "reader_id": reader_id,
             "expires_at": token_expires_at,

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hmac
+import http.client
 import json
 import re
 import sqlite3
 import uuid
 from datetime import date
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import Any
@@ -26,7 +28,7 @@ from .ai_readers import (
     is_loopback_address,
     validate_claim_payload as validate_ai_reader_claim_payload,
 )
-from .config import CentralConfig
+from .config import CentralConfig, _read_external_config
 from .domain import BatchValidationError, canonical_json, content_hash, utc_timestamp, validate_batch_envelope
 from .invitations import (
     EnrollmentConfigurationError,
@@ -53,6 +55,7 @@ from .storage import (
     WishNotCompletable,
 )
 from .scheduler import MinuteScheduler
+from .web_sessions import WebSessionManager
 
 
 class MissingDeviceTokenError(RuntimeError):
@@ -77,6 +80,8 @@ class CentralHTTPServer(ThreadingMixIn, HTTPServer):
         self.store.reconcile_credentials(config.token_bindings)
         self.scheduler = MinuteScheduler(self.store)
         self.media = MediaManager(MediaSettings.from_config(config))
+        self.web_sessions = WebSessionManager()
+        self.management_server: Any | None = None
         super().__init__(server_address, CentralRequestHandler)
         self.scheduler.start()
 
@@ -245,6 +250,90 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             return None
         return bound_device_id
 
+    def _web_session(self):
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+        except (TypeError, ValueError):
+            return None
+        morsel = cookie.get("__Host-LifeLinkWeb")
+        return self.server.web_sessions.get_session(morsel.value if morsel else None)
+
+    def _configured_web_origin(self) -> str | None:
+        if self.server.config.config_path is None:
+            return None
+        endpoint = _read_external_config(str(self.server.config.config_path)).get("public_endpoint")
+        if not isinstance(endpoint, dict) or endpoint.get("central_instance_id") != self.server.store.ai_readers.central_instance_id():
+            return None
+        base_url = endpoint.get("base_url")
+        parsed = urlparse(base_url) if isinstance(base_url, str) else None
+        if parsed is None or parsed.scheme != "https" or not parsed.netloc or parsed.path not in {"", "/"}:
+            return None
+        return f"https://{parsed.netloc}"
+
+    def _send_web_page(self, session) -> None:
+        from .management import _asset
+        page = _asset("index.html").decode("utf-8").replace("__CSRF_TOKEN__", session.csrf_token).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+        self.send_header("Content-Length", str(len(page)))
+        self.end_headers(); self.wfile.write(page)
+
+    def _send_web_bootstrap(self) -> None:
+        page = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Life Link</title><body><p id="status">正在安全打开 Life Link…</p><script>(async()=>{const status=document.getElementById('status');const key='lifelink_bootstrap=';const value=location.hash.slice(1).split('&').find(v=>v.startsWith(key));if(!value){status.textContent='需要从已配对的 Life Link 客户端打开此页面。';return;}const token=decodeURIComponent(value.slice(key.length));history.replaceState(null,'','/');try{const r=await fetch('/v1/web-sessions/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bootstrap_token:token})});if(!r.ok){status.textContent='浏览器访问已失效，请从客户端重新打开。';return;}location.replace('/');}catch(_){status.textContent='无法连接中央服务，请稍后从客户端重试。';}})()</script></body></html>'''.encode("utf-8")
+        self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Cache-Control", "no-store"); self.send_header("Referrer-Policy", "no-referrer"); self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"); self.send_header("Content-Length", str(len(page))); self.end_headers(); self.wfile.write(page)
+
+    def _serve_web_asset(self, path: str) -> bool:
+        from .management import STATIC_ASSETS, _asset
+        asset = path.removeprefix("/")
+        if asset not in STATIC_ASSETS:
+            return False
+        body = _asset(asset)
+        self.send_response(200); self.send_header("Content-Type", STATIC_ASSETS[asset]); self.send_header("Cache-Control", "public, max-age=86400"); self.send_header("X-Content-Type-Options", "nosniff"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+        return True
+
+    def _proxy_web_api(self, method: str) -> None:
+        session = self._web_session()
+        if session is None:
+            self.send_json(401, {"error": "web_session_required"}); return
+        if method not in {"GET", "HEAD"} and not hmac.compare_digest(self.headers.get("X-CSRF-Token", ""), session.csrf_token):
+            self.send_json(403, {"error": "invalid_csrf"}); return
+        if urlparse(self.path).path == "/api/shutdown":
+            self.send_json(403, {"error": "remote_shutdown_forbidden"}); return
+        management = self.server.management_server
+        if management is None:
+            self.send_json(503, {"error": "webui_unavailable"}); return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if size < 0 or size > self.server.config.max_body_bytes: raise ValueError
+            body = self.rfile.read(size) if size else None
+            connection = http.client.HTTPConnection("127.0.0.1", management.server_port, timeout=15)
+            headers = {"Host": f"127.0.0.1:{management.server_port}", "Origin": f"http://127.0.0.1:{management.server_port}", "X-CSRF-Token": management.csrf_token}
+            if self.headers.get("Content-Type"): headers["Content-Type"] = self.headers["Content-Type"]
+            if self.headers.get("If-None-Match"): headers["If-None-Match"] = self.headers["If-None-Match"]
+            connection.request(method, self.path, body=body, headers=headers)
+            response = connection.getresponse(); payload = response.read(); status = response.status
+            content_type = response.getheader("Content-Type", "application/json; charset=utf-8")
+            etag = response.getheader("ETag"); disposition = response.getheader("Content-Disposition")
+            connection.close()
+        except (OSError, ValueError, http.client.HTTPException):
+            self.send_json(502, {"error": "webui_proxy_unavailable"}); return
+        # Map tiles are public base-map imagery, not personal data.  Preserve
+        # the management proxy's bounded cache policy so opening the remote
+        # location page does not fetch the same tiles through the HTTPS tunnel
+        # on every render.  All WebUI API data remains explicitly no-store.
+        is_map_tile = urlparse(self.path).path.startswith("/map-tiles/")
+        cache_control = response.getheader("Cache-Control") if is_map_tile else None
+        self.send_response(status); self.send_header("Content-Type", content_type); self.send_header("Cache-Control", cache_control or ("public, max-age=86400" if is_map_tile else "no-store")); self.send_header("X-Content-Type-Options", "nosniff")
+        if etag: self.send_header("ETag", etag)
+        if disposition: self.send_header("Content-Disposition", disposition)
+        self.send_header("Content-Length", str(len(payload))); self.end_headers()
+        if payload: self.wfile.write(payload)
+
     def _handle_media_items(self) -> None:
         if not self._authorize_read():
             return
@@ -283,6 +372,9 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
 
     def do_PATCH(self) -> None:
         path = urlparse(self.path).path
+        if path.startswith("/api/"):
+            self._proxy_web_api("PATCH")
+            return
         if path.startswith("/v1/devices/"):
             self._handle_device_rename(path)
             return
@@ -305,6 +397,9 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         path = urlparse(self.path).path
+        if path.startswith("/api/"):
+            self._proxy_web_api("DELETE")
+            return
         if path.startswith("/v1/ai-readers/"):
             self._handle_ai_reader_revoke(path)
             return
@@ -324,6 +419,24 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/":
+            session = self._web_session()
+            if session is None:
+                self._send_web_bootstrap()
+            else:
+                self._send_web_page(session)
+            return
+        if parsed.path.startswith("/assets/") and self._serve_web_asset(parsed.path):
+            return
+        # The copied WebUI keeps Tianditu behind the management server proxy,
+        # so the browser never receives the map key.  Remote WebUI traffic
+        # must carry that same route through its authenticated HTTPS session.
+        if parsed.path.startswith("/map-tiles/"):
+            self._proxy_web_api("GET")
+            return
+        if parsed.path.startswith("/api/"):
+            self._proxy_web_api("GET")
+            return
         if parsed.path == "/v1/read/ai/context":
             self._handle_ai_reader_context(
                 parse_qs(parsed.query, keep_blank_values=True)
@@ -542,6 +655,38 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/v1/web-sessions":
+            device_id = self._authorize_device()
+            if device_id is None:
+                return
+            origin = self._configured_web_origin()
+            if origin is None:
+                self.send_json(409, {"error": "webui_public_endpoint_unavailable", "message": "需要先在中央管理中验证 HTTPS 外部地址"})
+                return
+            token = self.server.web_sessions.create_bootstrap(device_id)
+            self.send_json(201, {"web_url": f"{origin}/#lifelink_bootstrap={token}", "expires_in_seconds": 90})
+            return
+        if path == "/v1/web-sessions/claim":
+            origin = self._configured_web_origin()
+            if origin is None or not hmac.compare_digest(self.headers.get("Origin", ""), origin):
+                self.send_json(403, {"error": "invalid_web_origin"})
+                return
+            payload, error = self.read_json_body()
+            token = payload.get("bootstrap_token") if isinstance(payload, dict) else None
+            claimed = self.server.web_sessions.claim_bootstrap(token if isinstance(token, str) else "")
+            if claimed is None:
+                self.send_json(401, {"error": "invalid_or_expired_web_bootstrap"})
+                return
+            session_token, _session = claimed
+            self.send_response(204)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Set-Cookie", f"__Host-LifeLinkWeb={session_token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=28800")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if path.startswith("/api/"):
+            self._proxy_web_api("POST")
+            return
         if path == "/v1/ai-readers/pairings/claim":
             self._handle_ai_reader_claim()
             return
@@ -734,16 +879,22 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
         if not self._authorize_registered_device():
             return
         try:
+            if self.server.config.config_path is None:
+                raise ValueError("AI MCP package generation requires a verified HTTPS endpoint")
+            endpoint = _read_external_config(str(self.server.config.config_path)).get("public_endpoint")
+            if (
+                not isinstance(endpoint, dict)
+                or not isinstance(endpoint.get("base_url"), str)
+                or endpoint.get("central_instance_id") != self.server.store.ai_readers.central_instance_id()
+            ):
+                raise ValueError("AI MCP package generation requires a verified HTTPS endpoint")
             created = self.server.store.ai_readers.create_pairing(
-                claim_url=(
-                    f"http://127.0.0.1:{self.server.server_address[1]}"
-                    "/v1/ai-readers/pairings/claim"
-                ),
+                claim_url=f"{endpoint['base_url']}/v1/ai-readers/pairings/claim",
                 central_display_name="Life Link Central",
             )
         except (ValueError, sqlite3.Error) as error:
             self.send_json(
-                500,
+                409,
                 {"error": "ai_reader_pairing_create_failed", "message": str(error)},
             )
             return

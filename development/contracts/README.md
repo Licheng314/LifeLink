@@ -47,7 +47,7 @@
 
 ## v1.15.3 AI reader 被动只读边界
 
-- 短期 pairing token 仅用于 `POST /v1/ai-readers/pairings/claim`；成功只返回一次长期 `access_token`、`reader_id`、`expires_at` 和 `context_url`。AI reader 凭据独立于上传 Token、旧全局只读 Token 和注册设备管理权限。
+- 短期 pairing token 仅用于 `POST /v1/ai-readers/pairings/claim`；成功只返回一次长期 `access_token`、`reader_id`、`expires_at`、`context_url` 与必须匹配连接包的 `central_instance_id`。AI reader 凭据独立于上传 Token、旧全局只读 Token 和注册设备管理权限。正式 MCP 包只使用已经验证的 HTTPS origin，Token 请求不得跟随重定向。
 
 - `GET /v1/read/ai/context` 仅使用 `aiReaderAuth`。每次返回复用 `EventBackgroundResponse` 的完整背景、复用 `TimelineEvent` 的游标增量事件、带 `version/unchanged/content` 的理解说明、`next_cursor` 和本页三档重要程度计数。报告正文仍为 `evidence.body`。
 - `GET /v1/read/ai/updates` 仅使用 `aiReaderAuth`，可提交当前不透明游标，只返回 `update_mcp`。当前业务日中存在该游标之后产生的 `importance=high`、`wish_id` 非空或 `trigger_id` 非空的非审计事件时为 `true`；检查不返回正文、不签发或推进游标，也不写访问事件。其他普通事件仍会在下一次 context 正式读取时一并返回。

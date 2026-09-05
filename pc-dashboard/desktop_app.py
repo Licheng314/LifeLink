@@ -1342,13 +1342,15 @@ class WindowsTrayIcon:
     NIF_INFO = 0x00000010
     NIIF_WARNING = 0x00000002
     MF_STRING = 0x00000000
+    MF_CHECKED = 0x00000008
     MF_GRAYED = 0x00000001
     MF_SEPARATOR = 0x00000800
     TPM_RIGHTBUTTON = 0x0002
     TPM_RETURNCMD = 0x0100
     ID_OPEN_DASHBOARD = 1001
     ID_OPEN_STATUS = 1002
-    ID_EXIT = 1003
+    ID_TOGGLE_LOGIN_STARTUP = 1003
+    ID_EXIT = 1004
     IDI_APPLICATION = 32512
     IMAGE_ICON = 1
     LR_LOADFROMFILE = 0x0010
@@ -1357,13 +1359,15 @@ class WindowsTrayIcon:
 
     def __init__(
         self, root: tk.Tk, open_dashboard: Callable[[], None],
-        open_status: Callable[[], None], exit_application: Callable[[], None],
+        open_status: Callable[[], None], toggle_login_startup: Callable[[], None],
+        exit_application: Callable[[], None],
     ) -> None:
         if sys.platform != "win32":
             raise RuntimeError("通知区域图标仅支持 Windows")
         self.root = root
         self.open_dashboard = open_dashboard
         self.open_status = open_status
+        self.toggle_login_startup = toggle_login_startup
         self.exit_application = exit_application
         self.command_queue: queue.SimpleQueue[str] = queue.SimpleQueue()
         self.closed = False
@@ -1506,6 +1510,13 @@ class WindowsTrayIcon:
             self.user32.AppendMenuW(menu, self.MF_STRING, self.ID_OPEN_DASHBOARD, "打开 Dashboard")
             self.user32.AppendMenuW(menu, self.MF_STRING, self.ID_OPEN_STATUS, "打开用时状态窗口")
             self.user32.AppendMenuW(menu, self.MF_SEPARATOR, 0, None)
+            try:
+                startup_enabled = bool(pc_windows_startup.status().get("enabled"))
+            except (OSError, RuntimeError):
+                startup_enabled = False
+            startup_flags = self.MF_STRING | (self.MF_CHECKED if startup_enabled else 0)
+            self.user32.AppendMenuW(menu, startup_flags, self.ID_TOGGLE_LOGIN_STARTUP, "开机启动")
+            self.user32.AppendMenuW(menu, self.MF_SEPARATOR, 0, None)
             self.user32.AppendMenuW(menu, self.MF_STRING, self.ID_EXIT, "退出 PC 客户端")
             point = wintypes.POINT()
             self.user32.GetCursorPos(ctypes.byref(point))
@@ -1519,6 +1530,8 @@ class WindowsTrayIcon:
                 self.command_queue.put("dashboard")
             elif command == self.ID_OPEN_STATUS:
                 self.command_queue.put("status")
+            elif command == self.ID_TOGGLE_LOGIN_STARTUP:
+                self.command_queue.put("toggle-login-startup")
             elif command == self.ID_EXIT:
                 self.command_queue.put("exit")
         finally:
@@ -1546,19 +1559,21 @@ class WindowsTrayIcon:
                 self.open_dashboard()
             elif command == "status":
                 self.open_status()
+            elif command == "toggle-login-startup":
+                self.toggle_login_startup()
             elif command == "exit":
                 self.exit_application()
         if not self.closed:
             self.pump_job = self.root.after(50, self.pump_messages)
 
-    def notify(self, title: str, message: str) -> bool:
+    def notify(self, title: str, message: str, *, warning: bool = True) -> bool:
         if self.closed:
             return False
         original_flags = self.notify_data.uFlags
         self.notify_data.uFlags = self.NIF_INFO
         self.notify_data.szInfoTitle = title[:63]
         self.notify_data.szInfo = message[:255]
-        self.notify_data.dwInfoFlags = self.NIIF_WARNING
+        self.notify_data.dwInfoFlags = self.NIIF_WARNING if warning else 0
         self.notify_data.uTimeoutOrVersion = 10_000
         delivered = bool(
             self.shell32.Shell_NotifyIconW(
@@ -1679,11 +1694,54 @@ class LifeRadioDesktopApp:
         )
 
     def open_dashboard(self) -> None:
-        webbrowser.open(DASHBOARD_URL)
+        """Open the central WebUI without exposing this client's credential."""
+        central_url = os.environ.get("LIFE_RADIO_CENTRAL_BASE_URL", "").rstrip("/")
+        token = os.environ.get("LIFE_RADIO_CENTRAL_TOKEN", "")
+        try:
+            if not central_url or not token:
+                raise RuntimeError("客户端尚未完成中央配对")
+            request = Request(
+                f"{central_url}/v1/web-sessions",
+                data=b"{}",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.http_opener.open(request, timeout=12) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            web_url = payload.get("web_url") if isinstance(payload, dict) else None
+            if not isinstance(web_url, str) or not web_url.startswith("https://"):
+                raise RuntimeError("中央没有返回可用的 HTTPS WebUI 地址")
+            webbrowser.open(web_url)
+            return
+        except Exception as error:
+            logging.warning("打开中央 WebUI 失败：%s", error)
+            if getattr(error, "code", None) == 404:
+                detail = "当前运行的中央服务版本不支持 HTTPS WebUI；请重启为当前 LifeLink 中央服务。"
+            else:
+                detail = "请先在中央服务端配置并验证 HTTPS 外部地址。"
+            messagebox.showerror(
+                "Life Link",
+                f"无法打开中央 HTTPS WebUI：{error}\n\n{detail}",
+            )
 
     def open_status(self) -> None:
         if self.status_window is not None:
             self.status_window.show()
+
+    def toggle_login_startup(self) -> None:
+        """Toggle only this PC client's own Windows login shortcut."""
+        try:
+            current = pc_windows_startup.status()
+            enabled = not bool(current.get("enabled"))
+            updated = pc_windows_startup.set_enabled(enabled)
+        except (OSError, RuntimeError) as error:
+            logging.exception("PC 登录后启动设置失败")
+            if self.tray is not None:
+                self.tray.notify("Life Link PC 客户端", f"开机启动设置失败：{error}")
+            return
+        if self.tray is not None:
+            message = "已开启开机启动" if updated.get("enabled") else "已关闭开机启动"
+            self.tray.notify("Life Link PC 客户端", message, warning=False)
 
     def record_custom_event(
         self, event_key: str, title: str, detail: str = "",
@@ -1841,7 +1899,8 @@ class LifeRadioDesktopApp:
                 open_dashboard=self.open_dashboard,
             )
             self.tray = WindowsTrayIcon(
-                self.root, self.open_dashboard, self.open_status, self.exit_application,
+                self.root, self.open_dashboard, self.open_status,
+                self.toggle_login_startup, self.exit_application,
             )
             self.record_custom_event(
                 "application.started",

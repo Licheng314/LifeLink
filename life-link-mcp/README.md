@@ -1,6 +1,8 @@
 # Life Link MCP
 
-Life Link MCP 是面向本地 AI 伴侣的只读 stdio 适配程序。AI 宿主把 `life-link-mcp.exe` 作为子进程启动，通过 MCP 工具读取 Life Link 中央已经整理好的个人背景、当前状态和增量事件。
+Life Link MCP 是面向本地 AI 伴侣的只读 stdio 适配程序。AI 宿主在自己的 Windows、Linux 或 Docker 环境中以本地 Python stdio 子进程启动它，通过 MCP 工具读取 Life Link 中央已经整理好的个人背景、当前状态和增量事件。
+
+正式连接包只接受已验证的 HTTPS 外部地址，即使 AI 和中央服务在同一台机器也一样。它不使用 `localhost`、HTTP 或管理 WebUI 的 `8092` 端口；管理 WebUI 绝不能由反向代理公开。配对、上下文读取和更新检查均保持系统 TLS 证书与主机名校验，且任何携带 Bearer Token 的重定向都会失败，不会跟随到新地址。更换域名、隧道或证书身份后，请重新验证网络、重新生成连接包并重新配对。
 
 ## 工具
 
@@ -24,9 +26,19 @@ Windows 默认保存到：
 
 Token、游标和理解版本整体使用当前 Windows 用户的 DPAPI 加密。文件外层只保留中央实例、Reader 身份、到期时间等管理信息；日志和 MCP 错误不输出 Token、游标或完整配对材料。
 
+Linux 使用 `$XDG_STATE_HOME/life-link/mcp`；未设置时使用 `~/.local/state/life-link/mcp`。Docker 应将该目录挂载为仅供运行 MCP 的单一用户使用的持久卷。Linux/Docker 不具有 Windows DPAPI，因此程序会创建 `0700` 状态目录和 `0600` 状态文件；不要使用多人可读的共享卷。成功首次配对后，连接包内的 `pairing.json` 会被删除，长期 Token 只保存在上述私密状态中。
+
+远端 AI 主机或容器需要自行提供 Python 3。服务器上的 Python 不能代替远端运行环境。典型命令是：
+
+```text
+python /absolute/path/to/life_link_mcp.py serve --package-dir /absolute/path/to/connection-package
+```
+
+MCP JSON 中必须填入实际的 Python 命令与绝对解压路径；AI 若没有修改本机配置文件的权限，应将这两项告诉用户完成配置。
+
 ## 构建
 
-先使用 `requirements-build.txt` 安装构建依赖，再运行 `build_windows.ps1`。构建结果是 `dist/life-link-mcp.exe`，PC WebUI 生成正式 MCP 连接包时会把该文件装入 ZIP。PyInstaller 只在开发机参与构建，不是最终用户依赖。
+先使用 `requirements-build.txt` 安装构建依赖，再运行 `build_windows.ps1`。构建结果是 `dist/life-link-mcp.exe`，仅用于 Windows 可执行文件验证或兼容发布；跨平台连接包应携带标准库 `life_link_mcp.py`，不要求最终用户安装 PyInstaller。
 
 ## 验证
 

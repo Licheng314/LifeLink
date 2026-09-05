@@ -6,10 +6,11 @@ let fullRules = [];
 let blacklistRulesLoaded = false;
 
 // === 心愿与事件系统 ===
-let wishState = { wishes: [], historyWishes: [], historyWishesLoaded: false, triggers: [], triggerTypes: [], loading: false, stale: false, bizDate: '', dayStartHour: 0, sharedSettings: null, devicesCache: null, deviceUsageCache: [], background: null, aiReaders: [], aiLogs: [], companionProcessRunning: false, companionProcessName: '' };
+let wishState = { wishes: [], historyWishes: [], historyWishesLoaded: false, triggers: [], triggerTypes: [], loading: false, stale: false, bizDate: '', dayStartHour: 0, sharedSettings: null, devicesCache: null, deviceUsageCache: [], background: null, aiReaders: [], aiLogs: [] };
 let eventsLoadGeneration = 0;
 let eventsTimelineCache = null;
 let eventsTimelineSignature = null;
+const eventsTimelineEtags = new Map();
 let eventsTimelineRefreshInProgress = false;
 let eventFilterState = { showNormal: true, showSystem: true };
 const EVENTS_TIMELINE_REFRESH_MILLISECONDS = 30_000;
@@ -99,10 +100,15 @@ async function fSharedSettings() {
 async function fTimeline() {
   const biz = computeEventDisplayBizDate();
   const win = bizDateToUTCWindow(biz.bizDate, biz.dayStartHour);
-  const resp = await fetch(`/api/timeline-events?from=${encodeURIComponent(win.from)}&to=${encodeURIComponent(win.to)}`);
+  const url = `/api/timeline-events?from=${encodeURIComponent(win.from)}&to=${encodeURIComponent(win.to)}`;
+  const etag = eventsTimelineEtags.get(url);
+  const resp = await fetch(url, {headers: etag ? {'If-None-Match': etag} : {}});
+  if (resp.status === 304) return false;
   if (!resp.ok) throw new Error(`时间线读取失败（${resp.status}）`);
   if (resp.headers.get('X-Life-Radio-Cache') === 'stale') wishState.stale = true;
   const data = await resp.json();
+  const nextEtag = resp.headers.get('ETag');
+  if (nextEtag) eventsTimelineEtags.set(url, nextEtag);
   const nextEvents = data.events || [];
   const nextSignature = JSON.stringify(nextEvents);
   const changed = eventsTimelineSignature !== nextSignature;
@@ -152,26 +158,15 @@ async function fAIReaders() {
   wishState.aiReaders = data.readers || [];
   const reader = wishState.aiReaders.find(item => item.status === 'active') || null;
   if (reader) {
-    const [logsResult, processResult] = await Promise.allSettled([
+    const [logsResult] = await Promise.allSettled([
       fetch(`/api/ai-readers/${encodeURIComponent(reader.reader_id)}/access-logs?limit=10`),
-      fetch(`/api/ai-readers/${encodeURIComponent(reader.reader_id)}/process-status`),
     ]);
     if (logsResult.status === 'fulfilled' && logsResult.value.ok) {
       const logs = await logsResult.value.json().catch(() => ({}));
       wishState.aiLogs = logs.logs || [];
     } else wishState.aiLogs = [];
-    if (processResult.status === 'fulfilled' && processResult.value.ok) {
-      const processStatus = await processResult.value.json().catch(() => ({}));
-      wishState.companionProcessRunning = processStatus.process_running === true;
-      wishState.companionProcessName = String(processStatus.process_display_name || '');
-    } else {
-      wishState.companionProcessRunning = false;
-      wishState.companionProcessName = '';
-    }
   } else {
     wishState.aiLogs = [];
-    wishState.companionProcessRunning = false;
-    wishState.companionProcessName = '';
   }
 }
 
@@ -370,6 +365,19 @@ function localMonthDay(value) {
   }).format(date);
 }
 
+// This is deliberately an access-recency indicator, not a process detector:
+// an MCP client may run on another host and cannot be inspected by central.
+const AI_RECENT_SYNC_WINDOW_MILLISECONDS = 30 * 60 * 1000;
+function recentReaderSyncText(reader, log) {
+  if (reader?.status !== 'active') return '';
+  const requestedAt = new Date(reader.last_requested_at || log?.requested_at || '');
+  const elapsed = Date.now() - requestedAt.getTime();
+  if (Number.isNaN(requestedAt.getTime()) || elapsed < -60_000 || elapsed > AI_RECENT_SYNC_WINDOW_MILLISECONDS) return '';
+  const name = String(reader?.display_name || 'AI');
+  const minutes = Math.floor(Math.max(0, elapsed) / 60_000);
+  return minutes < 1 ? `${name} 刚刚访问过` : `${name} ${minutes} 分钟前访问过`;
+}
+
 function renderAIReaderPanel() {
   const container = document.getElementById('ai-reader-container');
   if (!container) return;
@@ -385,23 +393,17 @@ function renderAIReaderPanel() {
     const recentAccess = latestLog
       ? '最近访问：' + localDateTime(latestLog.requested_at) + ' · 已提供 ' + servedCount + ' 条事件'
       : '最近访问：暂无记录';
-    const processName = wishState.companionProcessName;
-    const normalizedReaderName = String(reader.display_name || '').toLocaleLowerCase();
-    const normalizedProcessName = processName.toLocaleLowerCase();
-    const processProductName = normalizedProcessName.trim().split(/\s+/)[0] || '';
-    const displayNameHasProcess = processName && (
-      normalizedReaderName.includes(normalizedProcessName)
-      || (processProductName.length >= 4 && normalizedReaderName.includes(processProductName))
-    );
-    const companionSuffix = wishState.companionProcessRunning && processName && !displayNameHasProcess ? ' (' + processName + ')' : '';
-    html += '<div class="ai-reader-status"><strong class="ai-reader-title">已连接 AI：' + escapeHtml(reader.display_name) + escapeHtml(companionSuffix) + '</strong>'
+    const recentSync = recentReaderSyncText(reader, latestLog);
+    html += '<div class="ai-reader-status"><strong class="ai-reader-title">已连接 AI：' + escapeHtml(reader.display_name) + '</strong>'
       + '<span class="ai-reader-token">Token 已配对 <span class="ai-reader-expiry">到期：' + escapeHtml(localMonthDay(reader.token_expires_at)) + '</span></span>'
-      + (wishState.companionProcessRunning && processName ? '<span class="ai-reader-detection"><span class="ai-reader-detection-dot" aria-hidden="true"></span>检测到 ' + escapeHtml(processName) + ' 进程正在运行</span>' : '')
+      + (recentSync ? '<span class="ai-reader-detection"><i class="ai-reader-detection-dot" aria-hidden="true"></i>' + escapeHtml(recentSync) + '</span>' : '')
       + '</div><div class="ai-reader-recent">' + escapeHtml(recentAccess) + '</div>';
   }
   html += '<div class="ai-reader-actions"><button type="button" id="ai-pairing-create" hidden aria-hidden="true" tabindex="-1">生成 AI 配对文本</button>'
     + '<button type="button" class="package" id="ai-connection-package-open">生成 AI 配对包</button>'
-    + '<button type="button" class="skill" id="ai-skill-open">查看 Skill</button></div></div>';
+    + '<button type="button" class="package" id="ai-mcp-config-open">查看 MCP JSON</button>'
+    + '<button type="button" class="skill" id="ai-skill-open">查看 Skill</button></div>'
+    + '<p id="ai-pairing-feedback" class="event-muted" aria-live="polite"></p></div>';
   container.innerHTML = html;
   document.getElementById('ai-pairing-create')?.addEventListener('click', async () => {
     const button = document.getElementById('ai-pairing-create'); button.disabled = true;
@@ -415,6 +417,10 @@ function renderAIReaderPanel() {
     finally { button.disabled = false; }
   });
   document.getElementById('ai-skill-open')?.addEventListener('click', async () => {
+    if (window.LifeLinkCentralManagement?.showAISkill) {
+      await window.LifeLinkCentralManagement.showAISkill();
+      return;
+    }
     const button = document.getElementById('ai-skill-open'); button.disabled = true;
     try {
       const response = await fetch('/api/ai-reader-skill/open', {method:'POST'});
@@ -424,7 +430,18 @@ function renderAIReaderPanel() {
     } catch (error) { showToast('打开 Skill 失败：' + error.message, 'err'); }
     finally { button.disabled = false; }
   });
+  document.getElementById('ai-mcp-config-open')?.addEventListener('click', async () => {
+    if (window.LifeLinkCentralManagement?.showMcpConfig) {
+      await window.LifeLinkCentralManagement.showMcpConfig();
+      return;
+    }
+    showToast('MCP JSON 暂不可用，请刷新页面后重试。', 'err');
+  });
   document.getElementById('ai-connection-package-open')?.addEventListener('click', async () => {
+    if (window.LifeLinkCentralManagement?.downloadAIPackage) {
+      await window.LifeLinkCentralManagement.downloadAIPackage({statusTarget: 'ai-pairing-feedback'});
+      return;
+    }
     const button = document.getElementById('ai-connection-package-open'); button.disabled = true;
     try {
       const response = await fetch('/api/ai-reader-connection-package/open', {method:'POST'});
@@ -541,6 +558,13 @@ function toggleEventFilter(type) {
   if (btn) btn.classList.toggle('off', !eventFilterState[type === 'normal' ? 'showNormal' : 'showSystem']);
   renderEventsTimeline();
   renderBizDayTimeline(); // 让时间轴标记同步半透明
+}
+
+// Do not use inline onclick attributes here.  The public HTTPS WebUI keeps a
+// strict CSP that deliberately blocks inline script execution.
+for (const type of ['normal', 'system']) {
+  const button = document.getElementById('event-filter-' + type);
+  if (button) button.addEventListener('click', () => toggleEventFilter(type));
 }
 
 function eventIsVisible(e) {

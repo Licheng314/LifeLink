@@ -13,9 +13,9 @@ from typing import Sequence
 
 from central.config import CentralConfig, default_config_path
 from central.http import MissingDeviceTokenError, create_server
+from central.management import MANAGEMENT_HOST, MANAGEMENT_PORT, create_management_server
 from central.operations import initialize_device
 from central.storage import readonly_diagnostics
-import central_windows_startup
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,7 +71,6 @@ def run_init(args: argparse.Namespace) -> int:
     read_action = "generated" if result.created_read_token else "preserved"
     print(f"Independent read credential {read_action} in the same external file.")
     print("Generated secrets were stored only in that external file and were not printed.")
-    central_windows_startup.ensure_default_enabled()
     return 0
 
 
@@ -101,19 +100,50 @@ def run_server(args: argparse.Namespace) -> int:
         print(f"Configuration path: {selected_path}", file=sys.stderr)
         return 2
 
+    management = None
+    management_thread = None
+
+    def stop_services() -> None:
+        # This callback is always invoked from a request worker, never from a
+        # serve_forever thread, so HTTPServer.shutdown cannot deadlock.
+        server.shutdown()
+        if management is not None:
+            management.shutdown()
+
+    try:
+        management = create_management_server(server, config, shutdown_callback=stop_services)
+    except OSError as error:
+        print(
+            f"Management service unavailable on {MANAGEMENT_HOST}:{MANAGEMENT_PORT}: {error}",
+            file=sys.stderr,
+        )
+
     print("=" * 54)
     print("  Life Link — Personal Context for AI")
     print("=" * 54)
     print(f"  Listen   : {config.host}:{config.port}")
     print(f"  Database : {config.database_path}")
     print(f"  Devices  : {len(config.token_bindings)} credential(s) configured")
+    if management is None:
+        print(f"  Manage   : unavailable ({MANAGEMENT_HOST}:{MANAGEMENT_PORT} is occupied)")
+    else:
+        print(f"  Manage   : http://{MANAGEMENT_HOST}:{MANAGEMENT_PORT}")
     print("  P2P/AW/TS: disabled")
     print("=" * 54)
     try:
+        if management is not None:
+            import threading
+            management_thread = threading.Thread(target=management.serve_forever, daemon=True)
+            management_thread.start()
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nCentral service stopped.")
     finally:
+        if management is not None:
+            management.shutdown()
+            management.server_close()
+            if management_thread is not None:
+                management_thread.join(timeout=2)
         server.server_close()
     return 0
 

@@ -147,6 +147,14 @@ async function initializeBusinessCalendar() {
       calendarState.weekStart = calendarWeekStart(calendarState.todayDate);
       renderBusinessCalendar();
       if (calendarState.weekStart !== previousWeek) await loadBusinessCalendarWeek();
+      // Page modules may already have started their initial request with the
+      // natural calendar date. Reload the visible one after the central
+      // calendar establishes the authoritative business date.
+      const page = document.querySelector('.page.active')?.id?.replace('page-', '');
+      if (page === 'timeline-events' && typeof loadEventsTimeline === 'function') await loadEventsTimeline();
+      if (page === 'app-usage' && typeof loadMultiDeviceUsage === 'function') await loadMultiDeviceUsage();
+      if (page === 'location' && typeof loadLocationSummary === 'function') await loadLocationSummary();
+      if (page === 'health-info' && typeof requestHealthInfoLoad === 'function') await requestHealthInfoLoad();
     }
     if (requested && requested !== calendarState.todayDate && !calendarState.days.get(requested)?.available) await selectBusinessDate(calendarState.todayDate);
   } catch (error) {
@@ -170,7 +178,7 @@ function activatePage(page) {
   if (page === 'app-usage' && typeof loadMultiDeviceUsage === 'function') {
     loadMultiDeviceUsage().catch(console.warn);
   }
-  if (page === 'devices' && typeof refreshSyncData === 'function') {
+  if (page === 'central-management' && typeof refreshSyncData === 'function') {
     refreshSyncData().catch(console.warn);
   }
   if (page === 'health-info' && typeof requestHealthInfoLoad === 'function') {

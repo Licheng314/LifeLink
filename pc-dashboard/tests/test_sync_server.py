@@ -90,6 +90,13 @@ class SyncServerTestCase(unittest.TestCase):
         self.assertEqual(body, payload)
         read.assert_called_once_with("2026-08-24", "2026-08-29")
 
+    def test_retired_pc_dashboard_is_not_served_from_the_sync_service(self):
+        status, body = self.request("GET", "/")
+        self.assertEqual(status, 410)
+        self.assertEqual(body["error"], "pc_dashboard_retired")
+        status, _ = self.request_text("/assets/scripts/app.js")
+        self.assertEqual(status, 404)
+
     def test_calendar_days_rejects_missing_or_oversized_ranges(self):
         status, body = self.request("GET", "/api/calendar-days?from=2026-08-01")
         self.assertEqual(status, 400)
@@ -272,38 +279,16 @@ class SyncServerTestCase(unittest.TestCase):
         self.assertEqual(body, archived)
         request.assert_called_once_with("POST", f"/v1/wishes/{wish_id}/complete", None)
 
-    def test_dashboard_static_assets_use_an_explicit_whitelist(self):
-        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
-        connection.request("GET", "/assets/styles/base.css")
-        response = connection.getresponse()
-        css = response.read().decode("utf-8")
-        self.assertEqual(response.status, 200)
-        self.assertEqual(response.getheader("Content-Type"), "text/css; charset=utf-8")
-        self.assertIn(":root", css)
-        connection.close()
-
-        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
-        connection.request("GET", "/assets/scripts/health-info.js")
-        response = connection.getresponse()
-        script = response.read().decode("utf-8")
-        self.assertEqual(response.status, 200)
-        self.assertEqual(response.getheader("Content-Type"), "text/javascript; charset=utf-8")
-        self.assertIn("async function loadHealthInfo()", script)
-        connection.close()
-
-        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
-        connection.request("GET", "/assets/images/life-link-logo.png")
-        response = connection.getresponse()
-        logo = response.read()
-        self.assertEqual(response.status, 200)
-        self.assertEqual(response.getheader("Content-Type"), "image/png")
-        self.assertTrue(logo.startswith(b"\x89PNG\r\n\x1a\n"))
-        connection.close()
-
-        status, _ = self.request_text("/assets/scripts/../sync_server.py")
-        self.assertEqual(status, 404)
-        status, _ = self.request_text("/assets/scripts/not-registered.js")
-        self.assertEqual(status, 404)
+    def test_retired_dashboard_assets_are_not_served_by_the_sync_service(self):
+        for path in (
+            "/assets/styles/base.css",
+            "/assets/scripts/health-info.js",
+            "/assets/images/life-link-logo.png",
+            "/assets/scripts/../sync_server.py",
+            "/assets/scripts/not-registered.js",
+        ):
+            status, _ = self.request_text(path)
+            self.assertEqual(status, 404)
 
     def test_blacklist_rule_proxy_rejects_extra_path_segments_without_forwarding(self):
         original_request = sync_server.central_media_request
@@ -509,6 +494,7 @@ class SyncServerTestCase(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(body, {
             "filename": exported.name,
+            "path": str(exported),
             "expires_at": payload["expires_at"],
         })
         central_request.assert_called_once_with(

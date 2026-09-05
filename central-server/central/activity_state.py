@@ -335,6 +335,23 @@ def derive_activity_state(connection: sqlite3.Connection, start: datetime, end: 
         if labels[index] not in {None, "transport"} and labels[index - 1] == labels[index + 1] != labels[index]:
             labels[index] = labels[index - 1]
 
+    # GPS/counter noise can produce a short high-cadence spike which looks
+    # like running.  Keep the underlying observations intact, but present a
+    # running segment shorter than 15 continuous minutes as ordinary walking.
+    # This runs after the one-minute bridge so the duration reflects the final
+    # contiguous activity classification rather than raw sample fragmentation.
+    index = 0
+    while index < len(labels):
+        if labels[index] != "running":
+            index += 1
+            continue
+        last = index + 1
+        while last < len(labels) and labels[last] == "running":
+            last += 1
+        if last - index < 15:
+            labels[index:last] = ["walking"] * (last - index)
+        index = last
+
     intervals = []
     index = 0
     while index < len(labels):

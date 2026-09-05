@@ -77,10 +77,7 @@ class AIReaderTests(unittest.TestCase):
         display_name="My Reader", process_identity=None, process_binding=None,
     ):
         pairing = self.server.store.ai_readers.create_pairing(
-            claim_url=(
-                f"http://127.0.0.1:{self.server.server_port}"
-                "/v1/ai-readers/pairings/claim"
-            )
+            claim_url="https://central.example.test/v1/ai-readers/pairings/claim"
         )
         pairing_text = json.loads(pairing.text)
         status, profile, _ = self.request(
@@ -267,11 +264,12 @@ class AIReaderTests(unittest.TestCase):
         self.assertTrue(pairing["central_instance_id"].startswith("central-"))
         self.assertEqual(
             pairing["claim_url"],
-            f"http://127.0.0.1:{self.server.server_port}/v1/ai-readers/pairings/claim",
+            "https://central.example.test/v1/ai-readers/pairings/claim",
         )
         self.assertEqual(
-            set(profile), {"access_token", "reader_id", "expires_at", "context_url"}
+            set(profile), {"central_instance_id", "access_token", "reader_id", "expires_at", "context_url"}
         )
+        self.assertEqual(profile["central_instance_id"], pairing["central_instance_id"])
         self.assertTrue(profile["context_url"].endswith("/v1/read/ai/context"))
         expires = datetime.fromisoformat(profile["expires_at"][:-1] + "+00:00")
         pairing_expires = datetime.fromisoformat(
@@ -581,22 +579,12 @@ class AIReaderTests(unittest.TestCase):
         )
         self.assertEqual(status, 401, forbidden)
 
-    def test_registered_device_can_generate_pairing_text(self):
+    def test_direct_pairing_text_requires_a_verified_https_endpoint(self):
         status, payload, _ = self.request(
             "POST", "/v1/ai-readers/pairings", token=DEVICE_TOKEN, body={}
         )
-        self.assertEqual(status, 201, payload)
-        self.assertEqual(set(payload), {"pairing_text", "expires_at", "central_instance_id"})
-        pairing = json.loads(payload["pairing_text"])
-        self.assertEqual(pairing["central_instance_id"], payload["central_instance_id"])
-        self.assertIn("next_cursor", pairing["instructions"][2])
-        self.assertIn("understanding.version", pairing["instructions"][2])
-        self.assertIn("立即", pairing["instructions"][2])
-        self.assertIn("UTF-8", pairing["instructions"][2])
-        self.assertIn("process_binding", pairing["instructions"][1])
-        process_template = pairing["claim_request_body_template"]["reader"]["process_binding"]
-        self.assertEqual(process_template["strategy"], "hosted-argument")
-        self.assertIn("REPLACE", process_template["process_name"])
+        self.assertEqual(status, 409, payload)
+        self.assertEqual(payload["error"], "ai_reader_pairing_create_failed")
 
         _, profile = self.create_and_claim(
             instance_id="settings-reader", display_name="塔洛"
@@ -844,10 +832,7 @@ class AIReaderTests(unittest.TestCase):
         self.assertEqual(expired_token["error"], "ai_reader_token_expired")
 
         unclaimed = self.server.store.ai_readers.create_pairing(
-            claim_url=(
-                f"http://127.0.0.1:{self.server.server_port}"
-                "/v1/ai-readers/pairings/claim"
-            )
+            claim_url="https://central.example.test/v1/ai-readers/pairings/claim"
         )
         pairing_text = json.loads(unclaimed.text)
         with closing(sqlite3.connect(self.database)) as connection:

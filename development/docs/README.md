@@ -2,7 +2,7 @@
 
 **Personal Context for AI** · 连接你的设备、数据与 AI
 
-更新时间：2026-08-31
+更新时间：2026-09-04
 
 本文件是项目知识的统一入口。开始工作前先阅读仓库根目录的 [`AGENTS.md`](../../AGENTS.md)，再读取 [`项目总控.md`](项目总控.md) 和本次任务对应的模块入口；不要从日期交接记录或 `.workbuddy` 记忆推断现状。
 
@@ -14,6 +14,9 @@
 4. [`项目地图/README.md`](项目地图/README.md)：Obsidian 主拓扑和可视化更新规则；地图是派生视图，不是事实权威。
 5. [`协作/代理执行规范.md`](协作/代理执行规范.md)：Agent 调度、范围、测试和交接规则。
 6. [`协作/任务模板.md`](协作/任务模板.md)：跨 Codex、WorkBuddy 或其他对话分配工作的统一任务单。
+7. [`协作/任务-中央管理WebUI与Windows托盘拆分-2026-09-04.md`](协作/任务-中央管理WebUI与Windows托盘拆分-2026-09-04.md)：代码已完成、待 Windows 与真实网络验收的中央管理 WebUI 与 Windows 平台外壳拆分；Linux/Docker 与公网域名下的远程 AI MCP 对接不在本阶段。
+8. [`协作/任务-AI远程MCP接入与Python运行时-2026-09-04.md`](协作/任务-AI远程MCP接入与Python运行时-2026-09-04.md)：代码与自动化完成、待真实 HTTPS/Windows/Linux-Docker 验收的远程 AI MCP、跨平台 Python 配对包和 Windows Python 3.13/3.14 运行时统一任务。
+9. [`协作/任务-中央权威WebUI迁移规划-2026-09-04.md`](协作/任务-中央权威WebUI迁移规划-2026-09-04.md)：进行中的 PC Dashboard 向中央本机权威 WebUI 分阶段迁移；第一阶段已接通只读真实数据，远程浏览器访问不在本任务内。
 
 出现冲突时按以下顺序判断：
 
@@ -27,7 +30,7 @@
 | --- | --- | --- |
 | 中央服务 | [`central-server/README.md`](../../central-server/README.md) | 身份、鉴权、SQLite 长期库、上传、查询、共享设置和派生视图 |
 | PC 客户端 | [`pc-dashboard/README.md`](../../pc-dashboard/README.md) | Windows 原生采集、可选浏览器插件、本地 outbox、中央代理、托盘、小窗和 WebUI 宿主 |
-| PC WebUI | [`pc-dashboard/web/README.md`](../../pc-dashboard/web/README.md) | 页面入口、CSS/JS 职责、加载顺序、接口依赖和 Agent 接入方法 |
+| 中央 WebUI | [`central-server/management-web/`](../../central-server/management-web/) | 中央权威页面、样式、脚本与本地静态资源；PC 端旧 WebUI 已移除 |
 | Android | [`mobile-app/README.md`](../../mobile-app/README.md) | 权限、手机采集、Room 队列、后台上传和手机界面 |
 | 共享契约 | [`contracts/README.md`](../contracts/README.md) | 跨端字段、端点、权限、ACK、幂等和 fixture |
 | 集成测试 | [`integration-tests/README.md`](../integration-tests/README.md) | 跨中央、PC 与契约的闭环验证 |

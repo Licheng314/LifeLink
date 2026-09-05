@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -7,6 +8,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from urllib.error import HTTPError
 from unittest import mock
 
 
@@ -39,7 +41,7 @@ class LifeLinkMCPTests(unittest.TestCase):
         }), encoding="utf-8")
         self.pairing = {
             "central_instance_id": "central-test",
-            "claim_url": "http://127.0.0.1:8091/v1/ai-readers/pairings/claim",
+            "claim_url": "https://life-link.example.test/v1/ai-readers/pairings/claim",
             "pairing_id": str(uuid.uuid4()),
             "pairing_token": "one-time-secret",
             "claim_request_body_template": {
@@ -69,7 +71,8 @@ class LifeLinkMCPTests(unittest.TestCase):
             "access_token": "long-secret-token",
             "reader_id": str(uuid.uuid4()),
             "expires_at": "2099-01-01T00:00:00Z",
-            "context_url": "http://127.0.0.1:8091/v1/read/ai/context",
+            "central_instance_id": "central-test",
+            "context_url": "https://life-link.example.test/v1/read/ai/context",
         }
         context = {
             "background": ["背景"], "current": [], "events": [],
@@ -94,7 +97,8 @@ class LifeLinkMCPTests(unittest.TestCase):
         secret = {
             "access_token": "token", "reader_id": str(uuid.uuid4()),
             "expires_at": "2099-01-01T00:00:00Z",
-            "context_url": "http://127.0.0.1:8091/v1/read/ai/context",
+            "context_url": "https://life-link.example.test/v1/read/ai/context",
+            "context_origin": "https://life-link.example.test",
             "next_cursor": "old-cursor", "understanding_version": "old-version",
         }
         reader.state_store.save(
@@ -124,7 +128,8 @@ class LifeLinkMCPTests(unittest.TestCase):
         secret = {
             "access_token": "token", "reader_id": str(uuid.uuid4()),
             "expires_at": "2099-01-01T00:00:00Z",
-            "context_url": "http://127.0.0.1:8091/v1/read/ai/context",
+            "context_url": "https://life-link.example.test/v1/read/ai/context",
+            "context_origin": "https://life-link.example.test",
             "next_cursor": "saved-cursor", "understanding_version": "version",
         }
         reader.state_store.save(
@@ -160,6 +165,97 @@ class LifeLinkMCPTests(unittest.TestCase):
         identity = package.reader_identity({"name": "unrelated-host-name"})
 
         self.assertEqual(identity, reader_document["reader"])
+
+    def test_package_rejects_non_https_loopback_or_non_origin_claim_urls(self):
+        invalid_urls = (
+            "http://life-link.example.test/v1/ai-readers/pairings/claim",
+            "https://127.0.0.1/v1/ai-readers/pairings/claim",
+            "https://user:password@life-link.example.test/v1/ai-readers/pairings/claim",
+            "https://life-link.example.test/other",
+            "https://life-link.example.test/v1/ai-readers/pairings/claim?token=x",
+            "https://life-link.example.test/v1/ai-readers/pairings/claim#fragment",
+        )
+        for url in invalid_urls:
+            with self.subTest(url=url):
+                self.pairing["claim_url"] = url
+                (self.package_dir / "pairing.json").write_text(json.dumps(self.pairing), encoding="utf-8")
+                with self.assertRaisesRegex(life_link_mcp.LifeLinkMCPError, "HTTPS"):
+                    life_link_mcp.ConnectionPackage(self.package_dir).load_pairing()
+
+    def test_pairing_rejects_wrong_central_instance_before_state_or_pairing_is_changed(self):
+        profile = {
+            "access_token": "long-secret-token", "reader_id": str(uuid.uuid4()),
+            "expires_at": "2099-01-01T00:00:00Z",
+            "central_instance_id": "another-central",
+            "context_url": "https://life-link.example.test/v1/read/ai/context",
+        }
+        reader, _ = self.make_reader([(200, profile)])
+
+        with self.assertRaisesRegex(life_link_mcp.LifeLinkMCPError, "does not match"):
+            reader.pair({"name": "test"})
+
+        self.assertTrue((self.package_dir / "pairing.json").is_file())
+        self.assertIsNone(reader.state_store.load())
+
+    def test_pairing_rejects_context_url_on_another_https_origin(self):
+        profile = {
+            "access_token": "long-secret-token", "reader_id": str(uuid.uuid4()),
+            "expires_at": "2099-01-01T00:00:00Z", "central_instance_id": "central-test",
+            "context_url": "https://wrong-life-link.example.test/v1/read/ai/context",
+        }
+        reader, _ = self.make_reader([(200, profile)])
+
+        with self.assertRaisesRegex(life_link_mcp.LifeLinkMCPError, "origin does not match"):
+            reader.pair({"name": "test"})
+
+    def test_bearer_request_uses_no_redirect_opener(self):
+        requests = []
+
+        class RedirectingOpener:
+            def open(self, request, timeout):
+                requests.append(request)
+                raise HTTPError(
+                    request.full_url, 302, "Found", {}, io.BytesIO(b'{"error":"redirect"}'),
+                )
+
+        with mock.patch.object(life_link_mcp, "build_opener", return_value=RedirectingOpener()) as opener:
+            self.assertEqual(
+                life_link_mcp._http_json(
+                    "GET", "https://life-link.example.test/v1/read/ai/context?view=compact",
+                    token="bearer-secret",
+                ),
+                (302, {"error": "redirect"}),
+            )
+
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].get_header("Authorization"), "Bearer bearer-secret")
+        self.assertTrue(any(isinstance(handler, life_link_mcp._NoRedirectHandler) for handler in opener.call_args.args))
+
+    @unittest.skipIf(os.name == "nt", "requires a POSIX runtime")
+    def test_non_windows_state_directory_uses_xdg_state_home(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.dict(os.environ, {"XDG_STATE_HOME": directory}, clear=False):
+                self.assertEqual(
+                    life_link_mcp.default_state_dir(),
+                    Path(directory) / "life-link" / "mcp",
+                )
+
+    @unittest.skipIf(os.name == "nt", "requires a POSIX runtime")
+    def test_non_windows_state_files_are_private(self):
+        store = life_link_mcp.StateStore(self.state_dir, self.profile_id)
+        store.save(
+            central_instance_id="central-test",
+            reader={"type": "mcp.test", "instance_id": f"mcp:{self.profile_id}", "display_name": "Test"},
+            secret={
+                "access_token": "secret", "reader_id": str(uuid.uuid4()),
+                "expires_at": "2099-01-01T00:00:00Z",
+                "context_url": "https://life-link.example.test/v1/read/ai/context",
+                "context_origin": "https://life-link.example.test",
+            },
+        )
+        self.assertEqual(store.root.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(store.path.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(store.path.stat().st_mode & 0o777, 0o600)
 
     def test_stdio_protocol_has_only_json_rpc_on_stdout(self):
         messages = "\n".join(json.dumps(item) for item in (

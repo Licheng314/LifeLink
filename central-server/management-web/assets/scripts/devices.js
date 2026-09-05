@@ -69,6 +69,12 @@ function buildRosterFromSnapshot(snapshot) {
 }
 
 function renderCentralStatusSection(centralStatus) {
+  if (document.querySelector('meta[name="lifelink-management"]')?.content === 'central') {
+    return `
+      <div class="device-card-detail" style="margin-top:8px;">
+        当前页面直接读取中央服务的实时数据；各设备会自行上报，无需在中央页面再次上传。
+      </div>`;
+  }
   const centralOutbox = centralStatus?.outbox || centralStatus?.last_result?.outbox || {};
   const centralStatusAvailable = centralStatus !== null;
   const centralRunning = centralStatus?.state === 'running';
@@ -278,23 +284,31 @@ function initializeDeviceSettings() {
 
 initializeDeviceSettings();
 
-function initializePcLoginStartup() {
-  const input = document.getElementById('pc-login-startup');
-  const hint = document.getElementById('pc-login-startup-status');
+function initializeCentralLoginStartup() {
+  const input = document.getElementById('central-login-startup');
+  const hint = document.getElementById('central-login-startup-status');
   if (!input) return;
   let confirmed = input.checked;
   const renderState = state => {
+    if (state.supported === false || state.state === 'unsupported') {
+      input.checked = false;
+      input.disabled = true;
+      confirmed = false;
+      if (hint) hint.textContent = '仅支持 Windows；当前系统无法设置中央服务开机启动';
+      return;
+    }
     input.checked = state.enabled === true;
+    input.disabled = false;
     confirmed = input.checked;
     if (!hint) return;
     if (state.blocked_by_windows === true) {
-      hint.textContent = '已被 Windows 或管理软件拦截；重新开启将恢复 LifeLink 启动项';
+      hint.textContent = '已被 Windows 或管理软件拦截；重新开启将恢复中央服务启动项';
     } else if (state.enabled === true) {
-      hint.textContent = '已启用：登录 Windows 后静默启动 PC 客户端';
+      hint.textContent = '已启用：登录 Windows 后自动启动 Life Link 中央服务';
     } else if (state.state === 'missing') {
-      hint.textContent = '启动项缺失或被管理软件移除；重新开启将修复';
+      hint.textContent = '启动项缺失或被管理软件移除；重新开启将修复中央服务启动项';
     } else {
-      hint.textContent = '已关闭：不会随 Windows 登录启动';
+      hint.textContent = '已关闭：不会随 Windows 登录启动中央服务';
     }
   };
   fetch('/api/runtime/login-startup').then(response => {
@@ -316,7 +330,7 @@ function initializePcLoginStartup() {
       const state = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(state.message || '登录后启动设置失败');
       renderState(state);
-      showToast(confirmed ? '已启用登录后自动启动' : '已关闭登录后自动启动', 'ok');
+      showToast(requested ? '已启用中央服务开机启动' : '已关闭中央服务开机启动', 'ok');
     } catch (error) {
       input.checked = confirmed;
       showToast(error.message, 'err');
@@ -326,7 +340,7 @@ function initializePcLoginStartup() {
   };
 }
 
-initializePcLoginStartup();
+initializeCentralLoginStartup();
 
 function renderSyncDeviceCards(snapshot, centralStatus = null, managementRoster = null) {
   const cards = document.getElementById('sync-device-cards');
@@ -345,11 +359,15 @@ function renderSyncDeviceCards(snapshot, centralStatus = null, managementRoster 
   for (const d of snapshot?.devices || []) statsById[d.device_id] = d;
   const disabled = stale;
 
-  // Current device first, then others.
-  const currentIndex = roster.findIndex(d => d.is_current);
-  const ordered = currentIndex >= 0
-    ? [roster[currentIndex], ...roster.slice(0, currentIndex), ...roster.slice(currentIndex + 1)]
-    : roster;
+  // A central page has no browser-local "current" device.  Make the useful
+  // operational state primary: connected devices first, then newest records.
+  const ordered = [...roster].sort((a, b) => {
+    const aConnected = a.status === 'connected' ? 1 : 0;
+    const bConnected = b.status === 'connected' ? 1 : 0;
+    if (aConnected !== bConnected) return bConnected - aConnected;
+    return String(b.last_seen_at || b.last_received_at || b.last_connected_at || '')
+      .localeCompare(String(a.last_seen_at || a.last_received_at || a.last_connected_at || ''));
+  });
 
   if (ordered.length === 0) {
     cards.innerHTML = `
@@ -420,24 +438,6 @@ async function isLocalClientHealthy() {
   }
 }
 
-async function updateSidebarServerStatus() {
-  const statusEl = document.getElementById('sidebar-server-status');
-  if (!statusEl) return;
-  const textEl = document.getElementById('sidebar-server-text');
-  let healthy = false;
-  try {
-    const response = await fetch('/api/central-health', { cache: 'no-store' });
-    if (response.ok) {
-      const data = await response.json();
-      healthy = data.connected === true;
-    }
-  } catch (_) {
-    healthy = false;
-  }
-  statusEl.classList.toggle('connected', healthy);
-  if (textEl) textEl.textContent = healthy ? '已连接' : '已断开';
-}
-
 async function loadDeviceManagementRoster() {
   const response = await fetch('/api/device-management');
   const stale = response.headers.get('X-Life-Radio-Cache') === 'stale';
@@ -487,7 +487,6 @@ async function refreshSyncData() {
     }
   } finally {
     syncRefreshInFlight = false;
-    updateSidebarServerStatus().catch(() => {});
   }
 }
 
@@ -514,25 +513,31 @@ function displayDeviceName(value) {
 
 function buildMultiDeviceRoster(snapshot) {
   const local = snapshot?.local || {};
-  const roster = [{
-    device_key: local.device_key || 'local',
-    display_name: local.display_name || local.hostname || '本机',
-    platform: 'desktop',
-    is_local: true,
-    status: 'connected',
-    last_connected_at: new Date().toISOString(),
-  }];
+  const roster = [];
+  const localKey = local.device_key || local.device_id;
+  if (localKey) {
+    roster.push({
+      ...local,
+      device_key: localKey,
+      display_name: local.display_name || local.hostname || '本机',
+      platform: local.platform || 'desktop',
+      is_local: true,
+      status: 'connected',
+      last_connected_at: new Date().toISOString(),
+    });
+  }
   (snapshot?.devices || []).forEach(device => {
-    if (!device?.device_key || device.device_key === roster[0].device_key) return;
-    roster.push({ ...device, is_local: false });
+    const deviceKey = device?.device_key || device?.device_id;
+    if (!deviceKey || deviceKey === localKey) return;
+    roster.push({ ...device, device_key: deviceKey, is_local: false });
   });
-  const localEntry = roster.shift();
-  roster.sort((a, b) => {
+  const localEntry = roster.find(device => device.is_local);
+  const remote = roster.filter(device => !device.is_local).sort((a, b) => {
     if (a.status !== b.status) return a.status === 'connected' ? -1 : 1;
-    return String(b.last_connected_at || b.last_received_at || '')
-      .localeCompare(String(a.last_connected_at || a.last_received_at || ''));
+    return String(b.last_connected_at || b.last_received_at || b.last_seen_at || '')
+      .localeCompare(String(a.last_connected_at || a.last_received_at || a.last_seen_at || ''));
   });
-  return [localEntry, ...roster];
+  return localEntry ? [localEntry, ...remote] : remote;
 }
 
 function setMultiDeviceSnapshot(snapshot) {

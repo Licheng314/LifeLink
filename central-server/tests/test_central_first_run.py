@@ -12,11 +12,6 @@ import central_first_run as setup
 
 
 class CentralFirstRunTests(unittest.TestCase):
-    def test_complete_marker_is_explicit_and_versioned(self) -> None:
-        self.assertFalse(setup.setup_complete({}))
-        self.assertFalse(setup.setup_complete({"setup": {"version": 0}}))
-        self.assertTrue(setup.setup_complete({"setup": {"version": 1}}))
-
     @mock.patch.object(setup, "first_free_port", return_value=8094)
     @mock.patch.object(setup, "port_state", return_value="occupied")
     def test_fresh_install_switches_from_occupied_default_automatically(
@@ -40,63 +35,7 @@ class CentralFirstRunTests(unittest.TestCase):
         with self.assertRaisesRegex(setup.SetupError, "端口冲突"):
             setup.select_central_port({"port": 8091}, ask=lambda _prompt: "n")
 
-    @mock.patch.object(setup, "create_client_invitation")
-    @mock.patch.object(setup, "_paired_device_count", return_value=1)
-    def test_existing_device_prevents_new_pairing_code(self, _count, create) -> None:
-        setup._offer_first_invitation(mock.Mock(), "https://central.example")
-        create.assert_not_called()
-
-    @mock.patch.object(setup, "configure_tailscale")
-    @mock.patch.object(setup, "_existing_endpoint", return_value="https://central.example")
-    def test_existing_endpoint_is_kept_by_default(self, _endpoint, tailscale) -> None:
-        result = setup.configure_connection(
-            8091, ask=lambda _prompt: "", previous_provider="tailscale",
-        )
-        self.assertEqual(result, ("tailscale", "https://central.example"))
-        tailscale.assert_not_called()
-
-    @mock.patch.object(setup, "configure_tailscale", return_value="https://new.example")
-    @mock.patch.object(setup, "_existing_endpoint", return_value="https://old.example")
-    def test_existing_endpoint_can_be_refreshed_with_tailscale(
-        self, _endpoint, tailscale,
-    ) -> None:
-        result = setup.configure_connection(
-            8091, ask=lambda _prompt: "2", previous_provider="tailscale",
-        )
-        self.assertEqual(result, ("tailscale", "https://new.example"))
-        tailscale.assert_called_once_with(central_port=8091, previous_central_port=None)
-
-    @mock.patch.object(setup, "configure_tailscale", return_value="https://new.example")
-    @mock.patch.object(setup, "_existing_endpoint", return_value=None)
-    def test_missing_endpoint_requires_a_remote_choice(self, _endpoint, tailscale) -> None:
-        answers = iter(["", "3", "1"])
-        result = setup.configure_connection(8091, ask=lambda _prompt: next(answers))
-        self.assertEqual(result, ("tailscale", "https://new.example"))
-        tailscale.assert_called_once()
-
-    @mock.patch.object(setup, "save_endpoint")
-    @mock.patch.object(setup, "read_token", return_value="x" * 32)
-    @mock.patch.object(
-        setup, "probe_endpoint", return_value={"base_url": "https://fallback.example"},
-    )
-    @mock.patch.object(
-        setup, "configure_tailscale",
-        side_effect=setup.TailscaleSetupError("not ready"),
-    )
-    @mock.patch.object(setup, "_existing_endpoint", return_value="https://old.example")
-    def test_failed_refresh_returns_to_menu_and_preserves_old_until_success(
-        self, _endpoint, _tailscale, _probe, _token, save,
-    ) -> None:
-        answers = iter(["2", "3", "https://fallback.example"])
-        result = setup.configure_connection(
-            8091, ask=lambda _prompt: next(answers), previous_provider="tailscale",
-        )
-        self.assertEqual(result, ("https_tunnel", "https://fallback.example"))
-        save.assert_called_once_with(
-            setup.default_endpoint_path(), "peanuthull", "https://fallback.example",
-        )
-
-    def test_completed_install_still_checks_connection(self) -> None:
+    def test_run_opens_management_webui_without_forcing_remote_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config_path = root / "config.json"
@@ -113,26 +52,35 @@ class CentralFirstRunTests(unittest.TestCase):
                 mock.patch.object(setup, "select_central_port", return_value=(8091, False)),
                 mock.patch.object(setup, "ensure_server_configuration", return_value=config_path),
                 mock.patch.object(setup, "_start_launcher"),
-                mock.patch.object(setup.CentralConfig, "from_environment", return_value=mock.Mock()),
-                mock.patch.object(
-                    setup, "configure_connection",
-                    return_value=("tailscale", "https://central.example"),
-                ) as configure,
+                mock.patch.object(setup.webbrowser, "open", return_value=True) as open_browser,
             ):
                 result = setup.run(
                     root / "LifeLink Central Service.exe",
                     ask=lambda _prompt: "",
                 )
             self.assertEqual(result, 0)
-            configure.assert_called_once_with(
-                8091,
-                ask=mock.ANY,
-                force_reconfigure=False,
-                previous_port=8091,
-                previous_provider="tailscale",
-            )
+            open_browser.assert_called_once_with(setup.MANAGEMENT_URL)
             saved = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["setup"], {"version": 1, "remote_mode": "tailscale"})
+            self.assertEqual(
+                saved["public_endpoint"]["base_url"], "https://central.example",
+            )
+
+    def test_management_probe_requires_the_exact_management_role(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "status": "ok", "role": "life-link-central-management",
+        }).encode("utf-8")
+        opener = mock.Mock()
+        opener.open.return_value = response
+        with mock.patch.object(setup, "build_opener", return_value=opener):
+            self.assertTrue(setup.management_is_ready())
+
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "status": "ok", "role": "central",
+        }).encode("utf-8")
+        with mock.patch.object(setup, "build_opener", return_value=opener):
+            self.assertFalse(setup.management_is_ready())
 
     def test_loopback_pc_profile_tracks_confirmed_port_change(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

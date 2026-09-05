@@ -12,6 +12,7 @@ from pathlib import Path
 
 
 TITLE = "LifeLink 中央服务启动失败"
+SUPPORTED_PYTHON_VERSIONS = ((3, 14), (3, 13))
 
 
 def module_root() -> Path:
@@ -21,24 +22,43 @@ def module_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def windowless_candidate(candidate: Path) -> Path:
+    """Use pythonw next to an explicit python.exe override when available."""
+    if candidate.name.lower() in {"python.exe", "python"}:
+        suffix = ".exe" if candidate.suffix.lower() == ".exe" else ""
+        return candidate.with_name(f"pythonw{suffix}")
+    return candidate
+
+
+def is_supported_python(candidate: Path) -> bool:
+    if not candidate.is_file():
+        return False
+    probe = "import sys; raise SystemExit(0 if sys.version_info[:2] in ((3, 14), (3, 13)) else 1)"
+    try:
+        return subprocess.run(
+            [str(candidate), "-c", probe], stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        ).returncode == 0
+    except OSError:
+        return False
+
+
 def source_python() -> Path | None:
+    candidates: list[Path] = []
     configured = os.environ.get("LIFE_LINK_SOURCE_PYTHON")
     if configured:
-        candidate = Path(configured).expanduser()
-        if candidate.is_file():
-            return candidate
+        candidates.append(windowless_candidate(Path(configured).expanduser()))
     local = os.environ.get("LOCALAPPDATA")
     if local:
-        try:
-            candidates = sorted((Path(local) / "Programs" / "Python").glob("Python*/pythonw.exe"), reverse=True)
-        except OSError:
-            candidates = []
-        if candidates:
-            return candidates[0]
+        root = Path(local) / "Programs" / "Python"
+        candidates.extend(root / f"Python{minor}" / "pythonw.exe" for minor in (314, 313))
     for name in ("pythonw.exe", "pythonw"):
         discovered = shutil.which(name)
         if discovered and "WindowsApps" not in Path(discovered).parts:
-            return Path(discovered)
+            candidates.append(Path(discovered))
+    for candidate in candidates:
+        if is_supported_python(candidate):
+            return candidate
     return None
 
 

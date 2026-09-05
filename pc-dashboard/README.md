@@ -1,6 +1,6 @@
-# Life Link PC 客户端与 WebUI
+# Life Link PC 客户端
 
-PC 项目只承担三件事：用 Windows 原生接口采集必要的本机使用事实、可靠上传到中央服务、在本机 WebUI 中代理读取中央数据。它不再依赖 ActivityWatch 主程序，不再发现其他客户端，也不在 PC 之间直接同步。
+PC 项目只承担三件事：用 Windows 原生接口采集必要的本机使用事实、可靠上传到中央服务，以及提供托盘与用时状态小窗。完整 Dashboard 已迁移至中央 HTTPS WebUI；PC 不再提供本地数据展示页面或其静态资源。它不再依赖 ActivityWatch 主程序，不再发现其他客户端，也不在 PC 之间直接同步。
 
 ## 启动
 
@@ -14,11 +14,11 @@ PC 项目只承担三件事：用 Windows 原生接口采集必要的本机使�
 %USERPROFILE%\LifeLink\client\config.json
 ```
 
-本地 Dashboard 只监听 `127.0.0.1`，默认端口 `8090`。托盘程序负责启动本地服务、打开 Dashboard、显示用时小窗和退出程序。
+本地采集服务只监听 `127.0.0.1`，默认端口 `8090`。它只服务采集、上传、浏览器插件兼容和状态小窗；访问其旧 Dashboard 地址会明确返回“已迁移”。托盘程序负责启动本地服务、通过已配对凭据安全打开中央 HTTPS Dashboard、显示用时小窗和退出程序；右键菜单中的“开机启动”是仅属于当前 Windows PC 的勾选项，切换时只修改本客户端的登录后启动快捷方式。
 
 登记启动项后会反查 `.lnk` 和 EXE 目标。WebUI 会区分 Windows/管理软件明确拦截与“许可仍开启但启动项被移除”，后者可通过重新开启选项修复。
 
-PC 启动器生成或确认存在后，默认立即登记为当前 Windows 用户登录后启动，不需要管理员权限；完成配对后以后台方式启动，不会自动打开浏览器或用时小窗，未配对时则进入客户端自己的配对引导。启动项直接指向带图标的 `LifeLink PC Client.exe`，并会在 WebUI 提示 Windows 是否已拦截它；用户显式重新开启时只恢复 LifeLink 自己的启动许可。源码检出使用本模块根目录 `pc-dashboard/LifeLink PC Client.exe`：它只是 PC 客户端自己的小型入口，按自身位置启动同项目的 `start_central_client.py --background-start`，不打包 PC 项目本体。首次双击 `start_central_client.bat` 会检查 Python 3.13（含 Tkinter）；缺失时询问用户是否通过 Windows `winget` 安装。若本模块的正式启动器尚不存在，会在 `%USERPROFILE%\LifeLink\tools\build-python` 安装仅用于构建的 PyInstaller，并生成 `pc-dashboard/LifeLink PC Client.exe`，随后立即登记启动项；MCP EXE 仍只在需要生成 AI 配对包时构建。项目移动后手动启动一次客户端源码即可刷新启动项路径。发行包升级或更换目录无需复制用户数据，身份和配对状态来自固定用户目录。
+PC 启动器生成或确认存在后，默认立即登记为当前 Windows 用户登录后启动，不需要管理员权限；完成配对后以后台方式启动，不会自动打开浏览器或用时小窗，未配对时则进入客户端自己的配对引导。启动项直接指向带图标的 `LifeLink PC Client.exe`，并会在 WebUI 提示 Windows 是否已拦截它；用户显式重新开启时只恢复 Life Link 自己的启动许可。源码检出使用本模块根目录 `pc-dashboard/LifeLink PC Client.exe`：它只是 PC 客户端自己的小型入口，按自身位置启动同项目的 `start_central_client.py --background-start`，不打包 PC 项目本体。首次双击 `start_central_client.bat` 会复用已验证的 Python 3.14 或 3.13（优先 3.14，且必须包含 Tkinter）；两者都没有时才询问是否通过 Windows `winget` 安装 3.14。首次启动、生成的源码启动器和登录启动使用同一选择规则。若本模块的正式启动器尚不存在，会在 `%USERPROFILE%\LifeLink\tools\build-python` 安装仅用于构建的 PyInstaller，并生成 `pc-dashboard/LifeLink PC Client.exe`，随后立即登记启动项；MCP EXE 仍只在需要生成 AI 配对包时构建。项目移动后手动启动一次客户端源码即可刷新启动项路径。发行包升级或更换目录无需复制用户数据，身份和配对状态来自固定用户目录。
 
 PC 客户端只使用 `%USERPROFILE%\LifeLink\client\config.json`。首次启动会写入本地端口、应用使用采集开关和项目公共天地图 Key；完成配对后，同一文件再保存中央地址、设备身份和凭据。旧配置中的 `activitywatch_url` 会在初始化时安全移除。`LIFE_LINK_DATA_ROOT` 可为高级部署整体改写 Life Link 数据根目录。
 
@@ -32,30 +32,23 @@ PC 客户端只使用 `%USERPROFILE%\LifeLink\client\config.json`。首次启动
 Windows 原生应用/输入状态 ─┐
 官方 AW 浏览器插件（可选） ├→ PC 本地 outbox → HTTPS → 中央 SQLite
                            ↓
-浏览器 WebUI ← PC 本地只读代理 ← 中央查询与 AI 摘要
+中央 HTTPS WebUI ← 已配对 PC 发起的一次性浏览器会话 ← 中央 SQLite / 派生视图
 ```
 
 - `POST /api/sync/central`：立即尝试上传本机原生采集器已写入 outbox 的事件。
 - `GET /api/sync/central`：查看本机 outbox、最近上传结果与配置状态。
-- `/api/devices`、`/api/usage`、`/api/locations`：由本地服务代理中央只读结果；位置响应包含按共享跨日窗口计算的活动状态及可空的区间代表位置，不扫描其他 PC。
-- `/api/health-info?date=YYYY-MM-DD`：代理中央健康信息；按日期保存最近一次成功的只读响应，中央暂不可用时返回缓存并标记离线。
-- `/api/calendar-days?from=YYYY-MM-DD&to=YYYY-MM-DD`：同源代理中央业务日周历摘要；`from/to` 为含首含尾的业务日期，最多 42 日，返回可用日期及中央长期库的逻辑内容字节数（不是 SQLite 文件体积）。
-- `/api/settings`：共享跨日起点、主健康 Android 设备、睡觉时间、早晚报和定时总结设置；AI 显示名称只读投影当前有效 reader 身份，不可手工修改。本地只保存完整的中央确认缓存。
-- `/api/ai-readers*`：本机 WebUI 到中央管理接口的同源代理，提供配对文本生成、reader 状态/最近访问、按配对绑定检测的同机应用进程状态、无副作用下一次 compact 原文预览和清理访问标记；`POST /api/ai-reader-skill/open` 只生成并打开 PC 数据目录中的 Skill 副本。`POST /api/ai-reader-connection-package/open` 生成包含 Windows MCP stdio EXE、现役中文 Skill、一次性配对材料、通用配置样例和自解释说明的 ZIP，并打开其所在的最新导出目录，供用户直接交给目标 AI。浏览器不会获得长期 AI Token 或中央设备 Token，进程状态也不参与 Token 有效性判定。
 - `/api/live-usage`：读取本机原生采集器的轻量实时快照，不等待中央同步周期。
-- `/api/wishes`、`/api/timeline-events`、`/api/trigger-types`、`/api/event-triggers`：同源代理中央资源；包括心愿每日评估、到期后手动完结、72 小时自动兜底和固定时间提醒。小窗和 WebUI 对当前业务日使用同一个固定查询窗口并共享本地时间线副本；30 秒刷新先用 `ETag` 向中央确认版本，未变化时不重复下载完整正文。浏览器仍使用本地 PATCH/DELETE 语义，本地代理向公网中央转换为 POST 兼容请求，浏览器不会获得中央 Token。
-- `/api/event-background?business_date=YYYY-MM-DD`：同源代理中央 v1.13.1 的动态背景摘要、当前应用/位置/活动状态与 AI 理解说明；设备和应用只显示 15 分钟内仍在线设备并相邻排列。它与时间线缓存一样仅在网络或响应损坏时使用最近成功的只读副本。
-- `/api/device-management`：读取中央当前设备名册；`PATCH/DELETE /api/device-management/{device_id}` 分别执行重命名和逻辑删除，本地代理向中央转换为 v1.9.0 POST 兼容请求。它与按日期读取数据的 `/api/devices` 不是同一接口。
-- `/map-tiles/{vec|cva}/{z}/{x}/{y}.png`：天地图瓦片本地代理。程序首次初始化时把项目方共享默认 Key 写入本机客户端配置，使普通用户无需自行申请；环境变量 `LIFE_RADIO_TIANDITU_KEY` 可在部署时覆盖。浏览器请求中不出现 Key，但源码及发行物中的共享 Key 是可被提取的公共配额凭据，不具备个人数据权限并必须支持监控与轮换。`vec` 为矢量底图、`cva` 为矢量注记；坐标系 CGCS2000≈WGS-84，与 Android FusedLocation 原生坐标系一致，无需转换。
+- `/api/timeline-events`：用时小窗读取当前业务日事件；每 30 秒用 `ETag` 检查中央版本，未变化时不重新下载正文。小窗只显示尚未发生的未来事件之外的内容。
+- `/api/settings`：用时小窗读取共享跨日起点；本地保存最近一次中央确认的只读缓存。
+- `/api/custom-events`：Windows 客户端写入本机启动、久坐等低频事件，随后通过 outbox 上传中央。
+- `/api/0/*`：仅为可选的官方 ActivityWatch 浏览器插件保留的最小兼容接口；不属于 Dashboard，也不展示个人数据。
 - 事件时间线中的 `occurred_at` 始终是 UTC；WebUI 按中央共享 `timezone` 转换后显示，不直接截取 UTC 字符串。
-- WebUI 现役页面只有事件时间线、设备管理、应用使用、位置、健康信息和小工具。首页的业务日时间轴按共享跨日起点展示当天事件分布和当前时间，下方事件列表展示同一批事件的正文、优先级与 AI 提供状态；位置页地图按定位观察与停留事实展示轨迹，不依赖步数。共享跨日时间设置归属设备管理；健康信息只展示中央派生的睡眠参考与按 Android 设备拆分的步数；旧模拟时间线、独立自定义事件页以及无入口的账本、笔记、媒体模板已经移除。
+- 事件时间线、设备管理、应用使用、位置、健康信息和小工具均由中央 WebUI 直接读取中央事实；PC 本地服务不再代理这些页面的数据或地图瓦片。
 - 应用与网站排行最多显示 10 条。现役黑名单管理继续读取中央规则；早期隐藏的黑名单饼图和 `settings.json` 明细表不再属于运行页面。
 
-## WebUI 源码结构
+## 已移除的 PC WebUI
 
-WebUI 不使用前端框架、包管理器或构建步骤。`dashboard.html` 只保留页面骨架，并按顺序加载 `web/styles/` 与 `web/scripts/` 中的静态文件；页面、脚本职责和依赖顺序见 [`web/README.md`](web/README.md)。新增静态文件时，还必须在 `sync_server.py` 的 `WEB_ASSETS` 白名单中显式登记，不能开放目录浏览或任意文件读取。
-
-第三方库仅 Leaflet 1.9.4（地图渲染），vendor 在 `web/vendor/leaflet/` 下本地加载，不依赖 CDN。
+旧 `dashboard.html`、`web/` 静态资源及其页面测试均已移除；中央 WebUI 的现役源码位于 `central-server/management-web/`。不得重新建立本地 Dashboard 路由或复制中央数据展示逻辑回 PC。
 
 ## Windows 原生采集与浏览器插件
 

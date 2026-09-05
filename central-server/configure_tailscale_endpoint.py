@@ -49,7 +49,10 @@ def _run_tailscale(*arguments: str) -> str:
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
         if "Access is denied" in detail:
-            raise TailscaleSetupError("Tailscale 拒绝修改配置。请以管理员身份运行本批处理。")
+            raise TailscaleSetupError(
+                "Tailscale 拒绝修改配置。请以管理员身份启动 Life Link，"
+                "或手动配置 Tailscale Serve。"
+            )
         raise TailscaleSetupError(detail or f"Tailscale 命令失败（退出码 {completed.returncode}）。")
     return completed.stdout
 
@@ -97,6 +100,14 @@ def _tailnet_dns_name(status: dict[str, Any]) -> str:
     return dns_name
 
 
+def detect_https_endpoint(*, https_port: int = DEFAULT_HTTPS_PORT) -> str:
+    """Return the current Tailnet HTTPS candidate without changing any route."""
+    if not 1 <= https_port <= 65535:
+        raise TailscaleSetupError("HTTPS 端口必须介于 1 和 65535 之间。")
+    status = _load_json(_run_tailscale("status", "--json"), "Tailscale 状态")
+    return f"https://{_tailnet_dns_name(status)}:{https_port}"
+
+
 def _existing_proxy(serve_config: dict[str, Any], key: str) -> str | None:
     web = serve_config.get("Web")
     if not isinstance(web, dict):
@@ -114,12 +125,13 @@ def _existing_proxy(serve_config: dict[str, Any], key: str) -> str | None:
     return str(proxy) if isinstance(proxy, str) else ""
 
 
-def configure(
+def ensure_tailscale_route(
     *,
     https_port: int = DEFAULT_HTTPS_PORT,
     central_port: int = 8091,
     previous_central_port: int | None = None,
 ) -> str:
+    """Detect Tailscale and non-destructively ensure its HTTPS route."""
     if not 1 <= https_port <= 65535:
         raise TailscaleSetupError("HTTPS 端口必须介于 1 和 65535 之间。")
     central_target = _central_target(central_port)
@@ -151,6 +163,20 @@ def configure(
     else:
         print(f"4/5 端口 {https_port} 已正确指向 Life Link，复用现有转发。", flush=True)
 
+    return endpoint
+
+
+def configure(
+    *,
+    https_port: int = DEFAULT_HTTPS_PORT,
+    central_port: int = 8091,
+    previous_central_port: int | None = None,
+) -> str:
+    endpoint = ensure_tailscale_route(
+        https_port=https_port,
+        central_port=central_port,
+        previous_central_port=previous_central_port,
+    )
     try:
         print(f"5/5 验证 HTTPS 地址 {endpoint}…", flush=True)
         probe_endpoint(endpoint, read_token(default_endpoint_path()), timeout=15)

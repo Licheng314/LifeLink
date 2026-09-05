@@ -15,27 +15,43 @@ $dataRoot = if ($env:LIFE_LINK_DATA_ROOT) {
 }
 
 
-function Test-Python313([string]$Candidate) {
+function Test-SupportedPython([string]$Candidate, [string]$TargetRole) {
     if (-not $Candidate -or -not (Test-Path -LiteralPath $Candidate -PathType Leaf)) {
         return $false
     }
-    & $Candidate -c "import sys, tkinter; raise SystemExit(0 if sys.version_info[:2] == (3, 13) else 1)" 2>$null
+    $pythonWindowless = if ((Split-Path -Leaf $Candidate).ToLowerInvariant() -eq 'pythonw.exe') {
+        $Candidate
+    } else {
+        Join-Path (Split-Path -Parent $Candidate) 'pythonw.exe'
+    }
+    if (-not (Test-Path -LiteralPath $pythonWindowless -PathType Leaf)) {
+        return $false
+    }
+    $probe = if ($TargetRole -eq 'pc') {
+        "import sys, tkinter; raise SystemExit(0 if sys.version_info[:2] in ((3, 14), (3, 13)) else 1)"
+    } else {
+        "import sys; raise SystemExit(0 if sys.version_info[:2] in ((3, 14), (3, 13)) else 1)"
+    }
+    & $Candidate -c $probe 2>$null
     return $LASTEXITCODE -eq 0
 }
 
 
-function Find-Python313 {
+function Find-SupportedPython {
     $candidates = @()
     if ($env:LIFE_LINK_SOURCE_PYTHON) {
         $candidates += $env:LIFE_LINK_SOURCE_PYTHON
     }
+    # Keep this order aligned with the generated source launchers: explicit
+    # override first, then the newest supported per-user installation.
+    $candidates += Join-Path $env:LOCALAPPDATA 'Programs\Python\Python314\python.exe'
     $candidates += Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313\python.exe'
     $command = Get-Command python.exe -ErrorAction SilentlyContinue
     if ($command) {
         $candidates += $command.Source
     }
     foreach ($candidate in $candidates | Select-Object -Unique) {
-        if (Test-Python313 $candidate) {
+        if (Test-SupportedPython $candidate $Role) {
             return (Resolve-Path -LiteralPath $candidate).Path
         }
     }
@@ -43,27 +59,28 @@ function Find-Python313 {
 }
 
 
-function Ensure-Python313 {
-    $python = Find-Python313
+function Ensure-SupportedPython {
+    $python = Find-SupportedPython
     if ($python) {
         return $python
     }
-    $answer = Read-Host 'Life Link needs Python 3.13 (including Tkinter). Install it for this Windows user now? [Y/n]'
+    $requirement = if ($Role -eq 'pc') { 'Python 3.13 or 3.14 (including Tkinter)' } else { 'Python 3.13 or 3.14' }
+    $answer = Read-Host "Life Link needs $requirement. Install it for this Windows user now? [Y/n]"
     if ($answer -match '^[Nn]') {
-        throw 'Python 3.13 is required to run the source checkout.'
+        throw 'Python 3.13 or 3.14 is required to run the source checkout.'
     }
     $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
     if (-not $winget) {
-        throw 'Windows winget is unavailable. Install Python 3.13 from python.org, then run this file again.'
+        throw 'Windows winget is unavailable. Install Python 3.13 or 3.14 from python.org, then run this file again.'
     }
     $wingetPath = $winget.Source
-    & $wingetPath install --id Python.Python.3.13 --exact --scope user --accept-package-agreements --accept-source-agreements
+    & $wingetPath install --id Python.Python.3.14 --exact --scope user --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0) {
-        throw "Python 3.13 installation failed with exit code $LASTEXITCODE."
+        throw "Python 3.14 installation failed with exit code $LASTEXITCODE."
     }
-    $python = Find-Python313
+    $python = Find-SupportedPython
     if (-not $python) {
-        throw 'Python 3.13 was installed but cannot yet be found. Close this window and run the startup file again.'
+        throw 'Python 3.14 was installed but cannot yet be found. Close this window and run the startup file again.'
     }
     return $python
 }
@@ -103,7 +120,7 @@ function Ensure-Launcher([string]$Python, [string]$TargetRole) {
 }
 
 
-$python = Ensure-Python313
+$python = Ensure-SupportedPython
 Ensure-Launcher -Python $python -TargetRole $Role
 $startupScript = if ($Role -eq 'central') {
     Join-Path $projectRoot 'central-server\central_windows_startup.py'
@@ -121,7 +138,7 @@ if ($NoStart) {
 
 $pythonWindowless = Join-Path (Split-Path -Parent $python) 'pythonw.exe'
 if (-not (Test-Path -LiteralPath $pythonWindowless -PathType Leaf)) {
-    throw "Python 3.13 is missing pythonw.exe: $pythonWindowless"
+    throw "The selected Python 3.13 or 3.14 installation is missing pythonw.exe: $pythonWindowless"
 }
 $moduleRoot = if ($Role -eq 'central') {
     Join-Path $projectRoot 'central-server'

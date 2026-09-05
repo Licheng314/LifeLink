@@ -13,7 +13,7 @@
 ```text
 central-server/       中央服务：SQLite 长期库、鉴权、上传、查询、派生与分钟调度
 pc-dashboard/         Windows PC 客户端：原生采集、outbox、中央代理、托盘/小窗与 WebUI 宿主
-pc-dashboard/web/     WebUI：页面、样式和浏览器端状态；只访问本机 PC 代理
+central-server/management-web/  中央 WebUI：页面、样式和浏览器端状态；通过中央会话访问权威数据
 mobile-app/           Android：权限、原生采集、Room 队列、后台上传和手机界面
 life-link-mcp/        本地 stdio MCP：AI Reader 的只读适配器与 Windows EXE 构建
 development/contracts/ 跨端协议、fixture、接口与数据语义
@@ -46,7 +46,7 @@ Android 采集 ──┘                            └→ AI Reader / MCP（只
 | 新增长期事件、字段、端点、确认或鉴权 | `development/contracts/`，再中央与客户端 | 契约、fixture、兼容性、时间语义 |
 | 中央持久化、派生、报告、心愿或读取口径 | `central-server/central/` | 原始事实是否保留、动态派生是否可重算 |
 | Windows 采集、outbox、托盘、小窗、PC 本地代理 | `pc-dashboard/` | 是否只影响本机、断网与重启行为 |
-| WebUI 页面与交互 | `pc-dashboard/web/` | 使用已有本机 API；历史业务日与当前管理状态的区别 |
+| WebUI 页面与交互 | `central-server/management-web/` | 使用中央同源适配接口；历史业务日与当前管理状态的区别 |
 | Android 权限、采集、Room、后台上传或手机 UI | `mobile-app/` | 用户授权、离线队列、上传 ACK 和本地数据保留 |
 | AI Reader/MCP 工具或配对材料 | `life-link-mcp/` 与 AI Reader 契约 | 独立只读权限、Token 不落日志、无主动推送 |
 

@@ -201,11 +201,24 @@ class DesktopStartupRecoveryTests(unittest.TestCase):
         self.assertEqual(pc_windows_startup.main(), 0)
         ensure.assert_called_once_with()
 
-    def test_pc_login_startup_is_managed_by_webui_not_tray_menu(self):
+    def test_pc_login_startup_is_managed_by_tray_menu(self):
         source = Path(desktop_app.__file__).read_text(encoding="utf-8")
-        self.assertNotIn("ID_TOGGLE_LOGIN_STARTUP", source)
-        self.assertNotIn("toggle_login_startup", source)
+        self.assertIn("ID_TOGGLE_LOGIN_STARTUP", source)
+        self.assertIn("toggle_login_startup", source)
+        self.assertIn('"开机启动"', source)
         self.assertIn("ensure_default_enabled()", source)
+
+    @mock.patch.object(pc_windows_startup, "set_enabled", return_value={"enabled": False})
+    @mock.patch.object(pc_windows_startup, "status", return_value={"enabled": True})
+    def test_tray_toggle_changes_only_the_local_startup_preference(self, status, set_enabled):
+        app = LifeRadioDesktopApp.__new__(LifeRadioDesktopApp)
+        app.tray = mock.Mock()
+        app.toggle_login_startup()
+        status.assert_called_once_with()
+        set_enabled.assert_called_once_with(False)
+        app.tray.notify.assert_called_once_with(
+            "Life Link PC 客户端", "已关闭开机启动", warning=False,
+        )
 
     def test_server_log_rotation_keeps_only_the_configured_tail(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -261,6 +274,9 @@ class DesktopTopmostControlTests(unittest.TestCase):
             'if lparam == self.WM_LBUTTONUP:\n                self.command_queue.put("status")',
             source,
         )
+        self.assertIn('self.ID_TOGGLE_LOGIN_STARTUP, "开机启动"', source)
+        self.assertIn('self.command_queue.put("toggle-login-startup")', source)
+        self.assertIn('def toggle_login_startup(self) -> None:', source)
 
 
 class SharedTimelineTests(unittest.TestCase):
