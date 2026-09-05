@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import messagebox
 from typing import Callable
+from urllib.parse import urlparse
 from urllib.request import ProxyHandler, Request, build_opener
 
 import pc_windows_startup
@@ -1717,6 +1718,13 @@ class LifeRadioDesktopApp:
             logging.warning("打开中央 WebUI 失败：%s", error)
             status_code = getattr(error, "code", None)
             if status_code == 409:
+                # On the central host, the missing HTTPS endpoint is a normal
+                # first-run condition.  Continue directly into the loopback
+                # management page; a remote PC must never guess such a URL.
+                parsed = urlparse(central_url)
+                if parsed.hostname in {"127.0.0.1", "localhost", "::1"}:
+                    webbrowser.open("http://127.0.0.1:8092")
+                    return
                 headline = "中央 HTTPS WebUI 尚未配置"
                 detail = "请在中央服务端托盘打开本机管理页，配置并验证 HTTPS 外部地址后，再从此处打开。"
             elif status_code == 404:

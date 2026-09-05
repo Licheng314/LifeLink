@@ -149,7 +149,7 @@ class WindowsInputActivityDetectorTests(unittest.TestCase):
 
 
 class DesktopStartupRecoveryTests(unittest.TestCase):
-    def test_open_dashboard_explains_when_https_network_is_not_configured(self):
+    def test_open_dashboard_opens_local_management_when_https_network_is_not_configured(self):
         app = object.__new__(LifeRadioDesktopApp)
         app.http_opener = mock.Mock()
         app.http_opener.open.side_effect = HTTPError(
@@ -158,10 +158,28 @@ class DesktopStartupRecoveryTests(unittest.TestCase):
         with mock.patch.dict(desktop_app.os.environ, {
             "LIFE_RADIO_CENTRAL_BASE_URL": "http://127.0.0.1:8091",
             "LIFE_RADIO_CENTRAL_TOKEN": "test-token",
-        }, clear=False), mock.patch.object(desktop_app.messagebox, "showerror") as show_error:
+        }, clear=False), mock.patch.object(desktop_app.webbrowser, "open") as open_browser, mock.patch.object(
+            desktop_app.messagebox, "showerror"
+        ) as show_error:
             app.open_dashboard()
+        open_browser.assert_called_once_with("http://127.0.0.1:8092")
+        show_error.assert_not_called()
+
+    def test_open_dashboard_does_not_guess_management_url_for_remote_central(self):
+        app = object.__new__(LifeRadioDesktopApp)
+        app.http_opener = mock.Mock()
+        app.http_opener.open.side_effect = HTTPError(
+            "https://central.example/v1/web-sessions", 409, "Conflict", {}, None,
+        )
+        with mock.patch.dict(desktop_app.os.environ, {
+            "LIFE_RADIO_CENTRAL_BASE_URL": "https://central.example",
+            "LIFE_RADIO_CENTRAL_TOKEN": "test-token",
+        }, clear=False), mock.patch.object(desktop_app.webbrowser, "open") as open_browser, mock.patch.object(
+            desktop_app.messagebox, "showerror"
+        ) as show_error:
+            app.open_dashboard()
+        open_browser.assert_not_called()
         self.assertIn("尚未配置", show_error.call_args.args[1])
-        self.assertNotIn("HTTP Error 409", show_error.call_args.args[1])
 
     def test_packaged_client_allows_a_longer_sync_server_start_window(self):
         self.assertGreaterEqual(desktop_app.SYNC_SERVER_START_TIMEOUT_SECONDS, 20)
