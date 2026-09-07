@@ -1,4 +1,5 @@
 import json
+import queue
 import subprocess
 import sys
 import tempfile
@@ -10,6 +11,19 @@ import central_server_app
 
 
 class CentralServerAppTests(unittest.TestCase):
+    def test_tray_immediately_allows_session_end_and_queues_cleanup(self):
+        tray = object.__new__(central_server_app.CentralServerTray)
+        tray.commands = queue.SimpleQueue()
+        tray.user32 = mock.Mock()
+        self.assertEqual(
+            tray._window_proc(123, tray.WM_QUERYENDSESSION, 0, 0), 1,
+        )
+        self.assertEqual(
+            tray._window_proc(123, tray.WM_ENDSESSION, 1, 0), 0,
+        )
+        self.assertEqual(tray.commands.get_nowait(), "system-exit")
+        tray.user32.PostMessageW.assert_called_once_with(123, tray.WM_NULL, 0, 0)
+
     def _response(self, payload, status=200):
         response = mock.MagicMock()
         response.status = status

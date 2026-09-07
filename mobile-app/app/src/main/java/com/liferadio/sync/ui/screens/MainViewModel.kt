@@ -4,6 +4,7 @@ import android.app.Application
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -76,6 +77,9 @@ data class UiState(
     val locationTrackingEnabled: Boolean = false,
     val locationPermissionGranted: Boolean = false,
     val locationServiceRunning: Boolean = false,
+    val batteryOptimizationDisabled: Boolean = false,
+    /** User-confirmed only: Android does not expose OEM auto-start switches to apps. */
+    val backgroundAutostartConfirmed: Boolean = false,
     val lastLocationDetectedAt: Long? = null,
     val lastLocation: StoredLocation? = null,
     val todayLocationSummary: TodayLocationSummary = TodayLocationSummary(),
@@ -323,7 +327,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sharedDayStartHour = settings.getSharedSettingsCache().dayStartHour,
                 sharedSettingsLoadedFromCentral = settings.getSharedSettingsCache().hasCentralValue,
                 syncIntervalMinutes = settings.syncIntervalMinutes,
-                locationTrackingEnabled = settings.isLocationTrackingEnabled
+                locationTrackingEnabled = settings.isLocationTrackingEnabled,
+                backgroundAutostartConfirmed = settings.backgroundAutostartConfirmed
             )
         }
 
@@ -354,6 +359,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // 初始刷新
         refreshStatus()
+        refreshBackgroundRuntimeStatus()
         viewModelScope.launch { refreshSharedSettings() }
         refreshNativeCollectionStatus()
         refreshHealthInfo()
@@ -589,6 +595,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 centralNextRetryAt = settings.centralNextRetryAt
             )
         }
+    }
+
+    fun refreshBackgroundRuntimeStatus() {
+        val application = getApplication<Application>()
+        val powerManager = application.getSystemService(PowerManager::class.java)
+        val batteryOptimizationDisabled = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            powerManager?.isIgnoringBatteryOptimizations(application.packageName) == true
+        _uiState.update {
+            it.copy(
+                batteryOptimizationDisabled = batteryOptimizationDisabled,
+                backgroundAutostartConfirmed = settings.backgroundAutostartConfirmed
+            )
+        }
+    }
+
+    fun confirmBackgroundAutostart() {
+        settings.backgroundAutostartConfirmed = true
+        refreshBackgroundRuntimeStatus()
     }
 
     private suspend fun refreshSharedSettings() {

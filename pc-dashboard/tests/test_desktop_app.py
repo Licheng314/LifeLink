@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import queue
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
@@ -149,6 +150,24 @@ class WindowsInputActivityDetectorTests(unittest.TestCase):
 
 
 class DesktopStartupRecoveryTests(unittest.TestCase):
+    def test_status_window_is_scheduled_for_every_client_start(self):
+        source = Path(desktop_app.__file__).read_text(encoding="utf-8")
+        self.assertIn("self.root.after(400, self.open_status)", source)
+        self.assertNotIn('if not os.environ.get("LIFE_RADIO_BACKGROUND_START"):\n            self.root.after(400, self.open_status)', source)
+
+    def test_tray_immediately_allows_session_end_and_queues_cleanup(self):
+        tray = object.__new__(desktop_app.WindowsTrayIcon)
+        tray.command_queue = queue.SimpleQueue()
+        tray.user32 = mock.Mock()
+        self.assertEqual(
+            tray._window_proc(123, tray.WM_QUERYENDSESSION, 0, 0), 1,
+        )
+        self.assertEqual(
+            tray._window_proc(123, tray.WM_ENDSESSION, 1, 0), 0,
+        )
+        self.assertEqual(tray.command_queue.get_nowait(), "system-exit")
+        tray.user32.PostMessageW.assert_called_once_with(123, tray.WM_NULL, 0, 0)
+
     def test_open_dashboard_opens_local_management_when_https_network_is_not_configured(self):
         app = object.__new__(LifeRadioDesktopApp)
         app.http_opener = mock.Mock()

@@ -116,6 +116,8 @@ class CentralServerTray:
     WM_CONTEXTMENU = 0x007B
     WM_NULL = 0
     WM_TIMER = 0x0113
+    WM_QUERYENDSESSION = 0x0011
+    WM_ENDSESSION = 0x0016
     NIM_ADD = 0
     NIM_DELETE = 2
     NIF_MESSAGE = 1
@@ -267,6 +269,16 @@ class CentralServerTray:
             self.owns_icon = False
 
     def _window_proc(self, hwnd: int, message: int, wparam: int, lparam: int) -> int:
+        # Windows asks before ending the user session.  A tray host must answer
+        # immediately; service cleanup happens only after Windows confirms the
+        # session is ending, never while this query is on the call stack.
+        if message == self.WM_QUERYENDSESSION:
+            return 1
+        if message == self.WM_ENDSESSION:
+            if wparam:
+                self.commands.put("system-exit")
+                self.user32.PostMessageW(hwnd, self.WM_NULL, 0, 0)
+            return 0
         if message == self.CALLBACK_MESSAGE:
             if lparam == self.WM_LBUTTONUP:
                 self.commands.put("open")
@@ -318,6 +330,8 @@ class CentralServerTray:
                     self.app.restart_server()
                 elif command == "exit":
                     self.app.exit_application()
+                elif command == "system-exit":
+                    self.app.exit_application(system_shutdown=True)
             self.user32.TranslateMessage(ctypes.byref(message))
             self.user32.DispatchMessageW(ctypes.byref(message))
 
@@ -407,17 +421,20 @@ class CentralServerApp:
             time.sleep(0.2)
         raise RuntimeError("中央服务未能在 20 秒内启动管理 WebUI")
 
-    def stop_server(self) -> None:
+    def stop_server(self, *, system_shutdown: bool = False) -> None:
         process = self.process
         if process is not None and process.poll() is None:
             if self.management_token:
-                request_managed_shutdown(self.management_token)
+                if system_shutdown:
+                    request_managed_shutdown(self.management_token, timeout=1.0)
+                else:
+                    request_managed_shutdown(self.management_token)
             try:
-                process.wait(timeout=5)
+                process.wait(timeout=1.5 if system_shutdown else 5)
             except subprocess.TimeoutExpired:
                 process.terminate()
                 try:
-                    process.wait(timeout=5)
+                    process.wait(timeout=1.0 if system_shutdown else 5)
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
@@ -480,7 +497,7 @@ class CentralServerApp:
                     self.restart_attempts += 1
                     self.next_restart_at = time.monotonic() + delay
 
-    def exit_application(self) -> None:
+    def exit_application(self, *, system_shutdown: bool = False) -> None:
         if self.quitting:
             return
         self.quitting = True
@@ -489,7 +506,7 @@ class CentralServerApp:
                 "Life Link 中央服务",
                 "当前中央服务不是由此托盘启动；本次只关闭托盘，原有服务继续运行。",
             )
-        self.stop_server()
+        self.stop_server(system_shutdown=system_shutdown)
         if self.tray is not None:
             self.tray.close()
         if self.mutex_handle:

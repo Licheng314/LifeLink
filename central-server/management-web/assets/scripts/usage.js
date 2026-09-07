@@ -248,11 +248,29 @@ function renderAllAppsChart(allApps, appPlatform, sharedMaxHours, appPlatformMap
 function renderSiteUsage(rows, sharedMaxHours, hasSites) {
   const panel = document.getElementById('site-usage-panel');
   const pair = document.querySelector('.usage-rank-pair');
-  // Android has no web browsing; hide the site area entirely and let the app
-  // chart span the full width instead of leaving an empty half column.
+  const selectedDevice = multiDeviceState.roster.find(device => device.device_key === multiDeviceState.selectedKey);
+  const hasDesktopInScope = multiDeviceState.selectedKey === 'all'
+    ? multiDeviceState.roster.some(device => String(device.platform || '').toLowerCase() === 'desktop')
+    : String(selectedDevice?.platform || '').toLowerCase() === 'desktop';
+  // Android has no browser extension receiver. Keep the original full-width
+  // app chart for that view, but leave a helpful installation prompt visible
+  // whenever a PC has not yet supplied any website facts.
   if (!hasSites) {
-    if (panel) panel.style.display = 'none';
-    if (pair) pair.style.gridTemplateColumns = '1fr';
+    if (!hasDesktopInScope) {
+      if (panel) panel.style.display = 'none';
+      if (pair) pair.style.gridTemplateColumns = '1fr';
+      return;
+    }
+    if (panel) {
+      panel.style.display = '';
+      panel.innerHTML = `<h3><i data-lucide="globe"></i> 网站访问使用时长</h3>
+        <div class="website-collection-hint">
+          <p>暂无网站访问数据</p>
+          <span>可在 Chrome 安装 ActivityWatch Web Watcher 插件，以收集网站使用时长。</span>
+          <a href="https://chromewebstore.google.com/detail/activitywatch-web-watcher/nglaklhklhcoonedhgnpgddginnjdadi" target="_blank" rel="noopener noreferrer">安装 Chrome 插件 <i data-lucide="external-link"></i></a>
+        </div>`;
+    }
+    if (pair) pair.style.gridTemplateColumns = '1fr 1fr';
     return;
   }
   if (panel) panel.style.display = '';

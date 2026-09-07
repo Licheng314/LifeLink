@@ -19,7 +19,7 @@
 
 服务端的运行设置、设备凭据、公开入口、数据库、日志、媒体和运行身份统一保存在 `%USERPROFILE%\LifeLink\central`。源码版和任意发行目录共享这一份中央数据，不再把可变数据放进项目或程序目录。`LIFE_LINK_DATA_ROOT` 可为高级部署整体改写数据根目录。
 
-`init` 使用系统安全随机数生成器创建不少于 32 字符的设备令牌，并在配置尚无 `read_token` 时自动生成一枚独立只读令牌。两类令牌只写入上述外部配置，不打印到终端、不写入服务日志，也不会写进仓库；重复执行 `init` 会保留已有 `read_token`。需要配置客户端时，由用户本人从该外部文件中复制与 `device_id` 对应的上传令牌，并单独保管 `read_token`。
+`init` 使用系统安全随机数生成器创建不少于 32 字符的设备令牌，并在配置尚无 `read_token` 时自动生成一枚独立只读令牌。两类令牌只写入上述外部配置，不打印到终端、不写入服务日志，也不会写进仓库；重复执行 `init` 会保留已有 `read_token`。日常连接 PC 与 Android 时，不需要也不应手动复制令牌；请在中央管理 WebUI 生成 `LR1.` 设备配对码。外部配置中的凭据仅供中央服务自身和受控诊断使用。
 
 每个 PC 或手机都必须使用自己的稳定 `device_id` 和独立令牌。增加另一台设备时，再运行一次 `init --device-id ...`；命令会追加凭据，不会静默替换已有设备的令牌。
 
@@ -38,7 +38,7 @@
 
 ### 独立启动中央服务端
 
-双击 `start_server.bat`。它启动中央长期库、固定绑定 `127.0.0.1:8092` 的本机管理 WebUI，以及“Life Link 中央服务端”托盘；不启动 PC 采集、PC 数据展示 WebUI 或用时窗口。首次运行会在 `%USERPROFILE%\LifeLink\central` 创建必要配置与运行数据，中央数据 API 默认使用 `127.0.0.1:8091`，冲突时按首次启动流程选择并持久化其他端口。源码首次启动复用已验证的 Python 3.14 或 3.13（优先 3.14），不再要求 Tkinter；两者都没有时才询问是否安装 3.14。首次启动、生成的源码启动器和登录启动使用同一选择规则。若正式启动器不存在，会在隔离构建环境生成 `central-server/LifeLink Central Service.exe`，随后登记为当前用户登录后自动启动。启动成功后首次向导打开 `http://127.0.0.1:8092`，网络可以暂不配置，但远程设备不可用。完整流程见根目录 [`README.md`](../README.md)。
+双击 `start_server.bat`。它启动中央长期库、固定绑定 `127.0.0.1:8092` 的本机管理 WebUI，以及“Life Link 中央服务端”托盘；不会启动 PC 采集或用时状态小窗。首次运行会在 `%USERPROFILE%\LifeLink\central` 创建必要配置与运行数据，中央数据 API 默认使用 `127.0.0.1:8091`，冲突时按首次启动流程选择并持久化其他端口。源码首次启动复用已验证的 Python 3.14 或 3.13（优先 3.14），不再要求 Tkinter；两者都没有时才询问是否安装 3.14。首次启动、生成的源码启动器和登录启动使用同一选择规则。若正式启动器不存在，会在隔离构建环境生成 `central-server/LifeLink Central Service.exe`，随后登记为当前用户登录后自动启动。启动成功后首次向导打开 `http://127.0.0.1:8092`，网络可以暂不配置，但远程设备不可用。完整流程见根目录 [`README.md`](../README.md)。
 
 托盘是纯 Windows 生命周期外壳，使用原生消息循环和消息框，不依赖 Tkinter。左键打开中央管理 WebUI；右键菜单严格只有“打开 WebUI、重启服务器、关闭服务器”。设备配对、AI 配对和网络配置全部归中央管理 WebUI；AI 包由中央直接生成并由浏览器下载，不依赖 `pc-dashboard`。关闭中央托盘只关闭其拥有的中央子进程，不关闭 `pc-dashboard` 客户端。
 
@@ -77,9 +77,43 @@
 
 只监听 `127.0.0.1:<配置端口>`，首次默认尝试 `8091`。这适合本机验收，不代表已完成公网 HTTPS、云部署或反向代理配置。
 
-## 3. PC WebUI 与 AI 读取中央数据
+### Linux / Docker（服务器部署）
 
-领取统一 `dashboard` 邀请后，PC 客户端 profile 会保存设备凭据和中央只读凭据；`LIFE_RADIO_CENTRAL_READ_TOKEN` 仍可作为部署时覆盖项。浏览器只访问本机同源的 `/api/devices`、`/api/usage`、`/api/locations` 和 `/api/ai-context/*`，由 PC 服务代理中央结果，不会把令牌放进页面、查询参数或响应。
+`Dockerfile` 与 `compose.yaml` 提供的是无桌面中央服务部署：容器使用 Python 3.13、标准库和 `tzdata`，以非 root 用户运行，SQLite 配置和数据库保存在具名持久卷 `lifelink-central-data`。镜像不包含任何真实配置、设备凭据或历史数据。
+
+在 Linux 服务器的 `central-server/` 目录执行：
+
+```bash
+docker compose build
+docker compose run --rm --no-deps central init --device-id "server-install-your-stable-id"
+docker compose up -d central
+curl --fail http://127.0.0.1:8091/v1/health
+```
+
+第二行只需首次执行一次；它会在持久卷内生成 `central/config.json`、SQLite 文件和首个设备凭据，且不会把 Token 打印到终端。备份时必须整体备份该持久卷；恢复时同样只能由单一中央容器写入。
+
+Compose 将数据 API 和管理页都只发布到 **Linux 主机回环地址**：`127.0.0.1:8091` 与 `127.0.0.1:8092`。容器内管理页为便于 Docker 转发而监听容器网络，但宿主机和云防火墙都不会将 8092 对外开放。需要管理时通过 SSH 隧道访问：
+
+```bash
+ssh -L 8092:127.0.0.1:8092 <linux-user>@<server-host>
+```
+
+随后在自己的浏览器打开 `http://127.0.0.1:8092`。公网域名、TLS 和反向代理是下一层：反向代理只能转发 `127.0.0.1:8091` 的 `/v1/*`，绝不能代理或映射 8092；阿里云安全组只应开放 HTTPS（以及你管理所需的 SSH），不开放 8091、8092 或 SQLite 文件。
+
+本机 Windows 已运行中央服务时，不要停止它，也不要让 Docker 复用其数据目录。可临时改用两个回环测试端口：
+
+```powershell
+$env:LIFE_LINK_DOCKER_DATA_PORT = "18091"
+$env:LIFE_LINK_DOCKER_MANAGEMENT_PORT = "18092"
+docker compose run --rm --no-deps central init --device-id "docker-local-test"
+docker compose up -d central
+```
+
+然后访问 `http://127.0.0.1:18092`，并用 `http://127.0.0.1:18091/v1/health` 检查数据服务。此 Compose 卷是独立的空白中央；试完使用 `docker compose down -v` 删除容器和测试数据卷。关闭当前 PowerShell 或清除上述两个环境变量后，部署会恢复默认的 8091/8092 映射。
+
+## 3. 中央 WebUI、PC 客户端与 AI 读取
+
+完整页面由中央管理 WebUI 提供，直接读取中央长期库和派生视图；设备、时间线、应用使用、位置、心愿、网络设置和配对均在这里管理。PC 客户端不再提供或代理 Dashboard：其 `8090` 本地服务只负责采集、上传、可选浏览器插件兼容和用时状态小窗。已配对 PC 从托盘打开 WebUI 时，会使用自己的凭据安全建立一次浏览器会话，页面不会得到长期令牌。
 
 中央读取已经覆盖设备、应用用量、位置视图以及用量/位置 AI Markdown 摘要。`/v1/read/locations` 还会按同一业务日窗口动态返回 `activity_state`，融合主手机步数/位置和全部设备 AFK 裁剪后的真实使用，并为每个区间提供可空的代表地址和经纬度。中央服务也提供受只读 Bearer Token 保护的 `/v1/read/*` 与 `/v1/read/ai/*.md`。`GET /v1/settings/shared` 返回中央权威的跨日设置和可空的主健康 Android 设备；更新默认使用 POST，并保留同语义 PATCH。写入只接受已注册设备凭据。
 
@@ -89,7 +123,7 @@ PC 新事件使用来源无关的 `app.foreground`、`device.input_state` 和 `w
 
 ### AI reader 被动只读接入（v1.15.3）
 
-中央管理 WebUI 在已验证的 HTTPS 地址上直接生成完整 MCP 连接 ZIP，浏览器下载；PC 数据展示 WebUI 的旧裸配对文本仅兼容保留并隐藏。包内一次性配对信息有效 24 小时且只能领取一次。AI/Agent 在自己的 Windows、Linux 或 Docker 主机上以 Python stdio 运行包内 MCP，通过 HTTPS 调用 `POST /v1/ai-readers/pairings/claim` 后只会收到一次 90 天 AI 专用只读 Token，随后通过 HTTPS `GET /v1/read/ai/context` 获取完整背景、增量时间线和版本化理解说明。该 Token 不具备上传、普通中央读取或管理权限，SQLite 只保存其 SHA-256。正式路径不接受 HTTP、loopback、证书失败或携带 Token 的重定向；8092 管理页绝不公开。
+中央管理 WebUI 在已验证的 HTTPS 地址上直接生成完整 MCP 连接 ZIP，浏览器下载；旧的裸配对文本入口只为兼容保留且默认隐藏。包内一次性配对信息有效 24 小时且只能领取一次。AI/Agent 在自己的 Windows、Linux 或 Docker 主机上以 Python stdio 运行包内 MCP，通过 HTTPS 调用 `POST /v1/ai-readers/pairings/claim` 后只会收到一次 90 天 AI 专用只读 Token，随后通过 HTTPS `GET /v1/read/ai/context` 获取完整背景、增量时间线和版本化理解说明。该 Token 不具备上传、普通中央读取或管理权限，SQLite 只保存其 SHA-256。正式路径不接受 HTTP、loopback、证书失败或携带 Token 的重定向；8092 管理页绝不公开。
 
 默认 `GET /v1/read/ai/context` 即返回 compact：元数据后先给出理解说明，再将背景和当前状态压成文字，事件只保留本地时间、重要程度和正文，不传事件 ID/key/内部 evidence；报告仍使用完整冻结正文。需要完整结构时显式使用 `?view=full`。`GET /v1/read/ai/updates` 是无正文、无游标推进的轻量检查：当前业务日存在 reader 游标之后产生的高优先级提醒、报告或心愿/触发器关联事件时返回 `update_mcp=true`。
 
@@ -171,7 +205,7 @@ Android 与 PC 使用同一套 `LR1` 邀请和设备权限口径。真实手机�
 
 ## 外部 HTTPS 入口
 
-公网域名反向代理、Tailscale Serve 或花生壳等穿透都必须指向中央数据服务 `127.0.0.1:<配置端口>`，不能指向 PC Dashboard 的 `8090`，也不能指向中央管理 WebUI 的 `8092`。与中央服务同机运行的 PC 客户端使用相同配置端口的回环地址；手机、远程 PC 和所有正式 AI MCP 使用中央 `config.json` 中已验证的 `public_endpoint.base_url` HTTPS 地址。外部地址可暂时未配置，此时远程能力与 AI MCP 配对包均不可用。
+公网域名反向代理、Tailscale Serve 或花生壳等穿透都必须指向中央数据服务 `127.0.0.1:<配置端口>`，不能指向 PC 本地采集服务的 `8090`，也不能指向中央管理 WebUI 的 `8092`。与中央服务同机运行的 PC 客户端使用相同配置端口的回环地址；手机、远程 PC 和所有正式 AI MCP 使用中央 `config.json` 中已验证的 `public_endpoint.base_url` HTTPS 地址。外部地址可暂时未配置，此时远程能力与 AI MCP 配对包均不可用。
 
 先双击 `start_server.bat` 启动中央服务，再从托盘打开 `http://127.0.0.1:8092`。在网络配置中选择公网服务器/域名、Tailscale 或 HTTPS 内网穿透，粘贴最终 HTTPS 地址并验证。成功后保存连接类型、公开地址、验证时间和中央实例身份；失败保留原地址。反向代理必须保留 Authorization 但在日志中脱敏，且不得让 Token 请求跟随重定向。`maintenance/configure_public_endpoint.bat` 仅作为命令行恢复入口。
 

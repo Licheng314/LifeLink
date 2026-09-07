@@ -191,7 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--background-start",
         action="store_true",
-        help="start after Windows login without opening the browser or status window",
+        help="start after Windows login without opening the browser",
     )
     parser.add_argument(
         "--allow-loopback-http",

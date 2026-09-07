@@ -18,7 +18,7 @@ PC 项目只承担三件事：用 Windows 原生接口采集必要的本机使�
 
 登记启动项后会反查 `.lnk` 和 EXE 目标。WebUI 会区分 Windows/管理软件明确拦截与“许可仍开启但启动项被移除”，后者可通过重新开启选项修复。
 
-PC 启动器生成或确认存在后，默认立即登记为当前 Windows 用户登录后启动，不需要管理员权限；完成配对后以后台方式启动，不会自动打开浏览器或用时小窗，未配对时则进入客户端自己的配对引导。启动项直接指向带图标的 `LifeLink PC Client.exe`，并会在 WebUI 提示 Windows 是否已拦截它；用户显式重新开启时只恢复 Life Link 自己的启动许可。源码检出使用本模块根目录 `pc-dashboard/LifeLink PC Client.exe`：它只是 PC 客户端自己的小型入口，按自身位置启动同项目的 `start_central_client.py --background-start`，不打包 PC 项目本体。首次双击 `start_central_client.bat` 会复用已验证的 Python 3.14 或 3.13（优先 3.14，且必须包含 Tkinter）；两者都没有时才询问是否通过 Windows `winget` 安装 3.14。首次启动、生成的源码启动器和登录启动使用同一选择规则。若本模块的正式启动器尚不存在，会在 `%USERPROFILE%\LifeLink\tools\build-python` 安装仅用于构建的 PyInstaller，并生成 `pc-dashboard/LifeLink PC Client.exe`，随后立即登记启动项；MCP EXE 仍只在需要生成 AI 配对包时构建。项目移动后手动启动一次客户端源码即可刷新启动项路径。发行包升级或更换目录无需复制用户数据，身份和配对状态来自固定用户目录。
+PC 启动器生成或确认存在后，默认立即登记为当前 Windows 用户登录后启动，不需要管理员权限；完成配对后以后台方式启动，不会自动打开浏览器，但会显示用时状态小窗作为采集已启动的确认，未配对时则进入客户端自己的配对引导。启动项直接指向带图标的 `LifeLink PC Client.exe`，并会在 WebUI 提示 Windows 是否已拦截它；用户显式重新开启时只恢复 Life Link 自己的启动许可。源码检出使用本模块根目录 `pc-dashboard/LifeLink PC Client.exe`：它只是 PC 客户端自己的小型入口，按自身位置启动同项目的 `start_central_client.py --background-start`，不打包 PC 项目本体。首次双击 `start_central_client.bat` 会复用已验证的 Python 3.14 或 3.13（优先 3.14，且必须包含 Tkinter）；两者都没有时才询问是否通过 Windows `winget` 安装 3.14。首次启动、生成的源码启动器和登录启动使用同一选择规则。若本模块的正式启动器尚不存在，会在 `%USERPROFILE%\LifeLink\tools\build-python` 安装仅用于构建的 PyInstaller，并生成 `pc-dashboard/LifeLink PC Client.exe`，随后立即登记启动项；MCP EXE 仍只在需要生成 AI 配对包时构建。项目移动后手动启动一次客户端源码即可刷新启动项路径。发行包升级或更换目录无需复制用户数据，身份和配对状态来自固定用户目录。
 
 PC 客户端只使用 `%USERPROFILE%\LifeLink\client\config.json`。首次启动会写入本地端口、应用使用采集开关和项目公共天地图 Key；完成配对后，同一文件再保存中央地址、设备身份和凭据。旧配置中的 `activitywatch_url` 会在初始化时安全移除。`LIFE_LINK_DATA_ROOT` 可为高级部署整体改写 Life Link 数据根目录。
 

@@ -14,7 +14,7 @@ from urllib.request import Request, build_opener, ProxyHandler
 from central.config import CentralConfig
 from central.http import create_server
 from central.ai_connection_package import ConnectionPackage, create_connection_package
-from central.management import create_management_server
+from central.management import create_management_server, management_bind_host, management_public_port
 from configure_tailscale_endpoint import TailscaleSetupError
 import central_windows_startup
 
@@ -48,6 +48,26 @@ class CentralManagementTests(unittest.TestCase):
     def tearDown(self):
         self.management.shutdown(); self.management.server_close(); self.thread.join(timeout=2)
         self.data.shutdown(); self.data.server_close(); self.data_thread.join(timeout=2); self.temp.cleanup()
+
+    def test_management_bind_is_loopback_by_default_and_container_opt_in_is_explicit(self):
+        self.assertEqual(management_bind_host({}), "127.0.0.1")
+        self.assertEqual(
+            management_bind_host(
+                {
+                    "LIFE_LINK_MANAGEMENT_HOST": "0.0.0.0",
+                    "LIFE_LINK_CONTAINER_MANAGEMENT": "1",
+                }
+            ),
+            "0.0.0.0",
+        )
+        with self.assertRaisesRegex(ValueError, "127.0.0.1"):
+            management_bind_host({"LIFE_LINK_MANAGEMENT_HOST": "0.0.0.0"})
+
+    def test_management_public_port_defaults_to_service_port_and_validates_override(self):
+        self.assertEqual(management_public_port(8092, {}), 8092)
+        self.assertEqual(management_public_port(8092, {"LIFE_LINK_MANAGEMENT_PUBLIC_PORT": "18092"}), 18092)
+        with self.assertRaisesRegex(ValueError, "integer"):
+            management_public_port(8092, {"LIFE_LINK_MANAGEMENT_PUBLIC_PORT": "nope"})
 
     def request(self, path, body=None, *, method=None, csrf=True, origin=True, authorization=None):
         headers = {}
@@ -442,6 +462,10 @@ class CentralManagementTests(unittest.TestCase):
         self.assertIn('id="day-boundary-hour"', page)
         self.assertIn('id="central-login-startup"', page)
         self.assertIn('其他设置', page)
+        usage_script = (web_root / 'assets' / 'scripts' / 'usage.js').read_text(encoding='utf-8')
+        self.assertIn('ActivityWatch Web Watcher', usage_script)
+        self.assertIn('chromewebstore.google.com/detail/activitywatch-web-watcher', usage_script)
+        self.assertIn('hasDesktopInScope', usage_script)
         timeline_script = (web_root / 'assets' / 'scripts' / 'wishes-events.js').read_text(encoding='utf-8')
         management_script = (web_root / 'assets' / 'scripts' / 'central-management.js').read_text(encoding='utf-8')
         devices_script = (web_root / 'assets' / 'scripts' / 'devices.js').read_text(encoding='utf-8')

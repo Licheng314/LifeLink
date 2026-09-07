@@ -13,7 +13,7 @@ from typing import Sequence
 
 from central.config import CentralConfig, default_config_path
 from central.http import MissingDeviceTokenError, create_server
-from central.management import MANAGEMENT_HOST, MANAGEMENT_PORT, create_management_server
+from central.management import MANAGEMENT_PORT, create_management_server, management_bind_host
 from central.operations import initialize_device
 from central.storage import readonly_diagnostics
 
@@ -102,6 +102,7 @@ def run_server(args: argparse.Namespace) -> int:
 
     management = None
     management_thread = None
+    management_host = management_bind_host()
 
     def stop_services() -> None:
         # This callback is always invoked from a request worker, never from a
@@ -111,10 +112,15 @@ def run_server(args: argparse.Namespace) -> int:
             management.shutdown()
 
     try:
-        management = create_management_server(server, config, shutdown_callback=stop_services)
+        management = create_management_server(
+            server,
+            config,
+            address=(management_host, MANAGEMENT_PORT),
+            shutdown_callback=stop_services,
+        )
     except OSError as error:
         print(
-            f"Management service unavailable on {MANAGEMENT_HOST}:{MANAGEMENT_PORT}: {error}",
+            f"Management service unavailable on {management_host}:{MANAGEMENT_PORT}: {error}",
             file=sys.stderr,
         )
 
@@ -125,9 +131,9 @@ def run_server(args: argparse.Namespace) -> int:
     print(f"  Database : {config.database_path}")
     print(f"  Devices  : {len(config.token_bindings)} credential(s) configured")
     if management is None:
-        print(f"  Manage   : unavailable ({MANAGEMENT_HOST}:{MANAGEMENT_PORT} is occupied)")
+        print(f"  Manage   : unavailable ({management_host}:{MANAGEMENT_PORT} is occupied)")
     else:
-        print(f"  Manage   : http://{MANAGEMENT_HOST}:{MANAGEMENT_PORT}")
+        print(f"  Manage   : http://{management_host}:{MANAGEMENT_PORT}")
     print("  P2P/AW/TS: disabled")
     print("=" * 54)
     try:

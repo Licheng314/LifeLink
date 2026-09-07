@@ -93,6 +93,11 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean(KEY_LOCATION_TRACKING_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_LOCATION_TRACKING_ENABLED, value).apply()
 
+    /** OEM auto-start switches have no standard Android read API; this records only the user's confirmation. */
+    var backgroundAutostartConfirmed: Boolean
+        get() = prefs.getBoolean(KEY_BACKGROUND_AUTOSTART_CONFIRMED, false)
+        set(value) = prefs.edit().putBoolean(KEY_BACKGROUND_AUTOSTART_CONFIRMED, value).apply()
+
     var lastLocationDetectedAt: Long
         get() = prefs.getLong(KEY_LOCATION_LAST_DETECTED_AT, 0L)
         set(value) = prefs.edit().putLong(KEY_LOCATION_LAST_DETECTED_AT, value).apply()
@@ -391,6 +396,7 @@ class SettingsStore(context: Context) {
         private const val KEY_NATIVE_USAGE_ACTIVE_CLASS_NAME = "native_usage_active_class_name"
         private const val KEY_NATIVE_USAGE_ACTIVE_STARTED_AT = "native_usage_active_started_at"
         private const val KEY_LOCATION_TRACKING_ENABLED = "location_tracking_enabled"
+        private const val KEY_BACKGROUND_AUTOSTART_CONFIRMED = "background_autostart_confirmed"
         private const val KEY_LOCATION_LAST_DETECTED_AT = "location_last_detected_at"
         private const val KEY_LOCATION_LAST_LATITUDE = "location_last_latitude"
         private const val KEY_LOCATION_LAST_LONGITUDE = "location_last_longitude"

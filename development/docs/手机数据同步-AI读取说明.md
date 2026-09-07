@@ -9,9 +9,9 @@
 
 ## AI reader 统一入口
 
-默认中央与 AI 同机：用户在 PC WebUI 首页的 AI 卡片中选择“生成 AI 配对文本”，AI 使用其中的一次性配对凭据领取独立长期只读 Token，随后调用：
+用户先在中央管理 WebUI 验证 HTTPS 网络，再选择“生成 AI 配对包”。AI 使用包内一次性配对材料领取独立长期只读 Token，随后通过该已验证的 HTTPS 地址调用：
 
-`GET http://127.0.0.1:8091/v1/read/ai/context`
+`GET https://<已验证的中央地址>/v1/read/ai/context`
 
 首次无游标读取当前业务日事件；后续携带中央返回的 `next_cursor` 获取增量事件。背景每次完整返回，理解说明通过 `understanding_version` 避免重复。长期 Token 只允许这个读取接口，不能上传、管理设备或修改设置。具体字段、状态码和管理边界以 [`../contracts/ai-reader-passive-read-v1.md`](../contracts/ai-reader-passive-read-v1.md) 为准。
 
@@ -19,15 +19,13 @@
 
 ## MCP 连接包
 
-PC WebUI 首页的“生成 AI 配对包”会生成一个由用户主动交给目标 AI 的 ZIP。包内包含 Windows `life-link-mcp.exe`、现役中文 Skill、一次性配对材料、通用 Reader 身份和 MCP 配置样例；Life Link 不识别目标 AI，也不修改任何特定应用的配置。将压缩包发送给目标 AI 后，由它解压并自行登记 stdio MCP，也可按实际身份补充同机进程绑定。
+中央管理 WebUI 的“生成 AI 配对包”会下载一个由用户主动交给目标 AI 的 ZIP。包内包含跨平台标准库 Python MCP 脚本、现役中文 Skill、一次性配对材料、通用 Reader 身份、说明和 MCP JSON 模板；不要求 Windows 可执行文件，也不修改任何特定 AI 的配置。目标 AI 或用户需要将 JSON 中的 Python 指令和解压绝对路径改为实际环境值。
 
-`life-link-mcp.exe` 提供 `lifelink_connection_status` 与 `lifelink_read_context` 两个只读工具。首次读取自动领取 Reader Token，后续保存并提交中央签发的游标；Token、游标和理解版本在 Windows 上使用当前用户 DPAPI 加密。MCP 只是现役 Reader HTTP 协议的本地适配层，不增加上传、管理或写入权限。
-
-当前没有 `lifelink_check_updates`：中央协议尚未提供无副作用的轻量更新检查，不能让一次完整上下文读取冒充轮询标志，否则会错误推进读取标记。该能力需要以后先增加独立中央契约。
+MCP 提供 `lifelink_connection_status`、`lifelink_check_updates` 与 `lifelink_read_context` 三个只读工具。首次正式读取自动领取 Reader Token，后续保存并提交中央签发的游标；更新检查只返回是否需要读取，不返回正文也不推进游标。Token、游标和理解版本在 Windows 上使用当前用户 DPAPI 加密。MCP 只是现役 Reader HTTPS 协议的本地适配层，不增加上传、管理或写入权限。
 
 当前代码和自动化测试已经完成，用户也已使用真实外部 AI/Agent 完成配对与读取验收。个人模式只维持一个有效 AI 连接；新 AI 身份成功配对时，中央会撤销原有效 Token，同时保留历史 reader 与访问日志用于审计。活动状态已由中央执行步数与定位双来源证据门槛；任一来源不足的分钟不会进入活动状态或 AI 背景。
 
-## Markdown 兼容入口
+## Markdown 兼容入口（仅旧自动化）
 
 同机自动化优先使用 PC 客户端的回环代理。它负责按本地业务日计算查询范围，不会向浏览器或阅读程序暴露中央凭据；不要通过 Tailscale、花生壳或其他公网入口暴露 8090：
 
@@ -57,8 +55,9 @@ PC WebUI 首页的“生成 AI 配对包”会生成一个由用户主动交给�
 - 新版位置数据是手机逐条同步的不可变观察，PC 再派生位置段；旧版活动段仍按兼容规则更新。地址可能为空，不得猜测。
 - 摘要只反映已确认写入中央长期库的数据。手机或远端 PC 未连接、服务未运行、同步尚未完成时，摘要不会凭空补齐数据。
 
-完整的字段含义、异常判断和排障步骤以 PC 服务的
-[`ai_context/README.md`](../../pc-dashboard/ai_context/README.md) 为准。
+完整的字段含义、异常判断和排障步骤以
+[`../contracts/ai-reader-passive-read-v1.md`](../contracts/ai-reader-passive-read-v1.md) 与
+[`../../life-link-mcp/README.md`](../../life-link-mcp/README.md) 为准。
 
 ## 自动化建议
 

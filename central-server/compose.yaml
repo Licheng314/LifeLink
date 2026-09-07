@@ -1,0 +1,26 @@
+services:
+  central:
+    build:
+      context: .
+    image: lifelink-central:local
+    restart: unless-stopped
+    environment:
+      LIFE_LINK_DATA_ROOT: /var/lib/lifelink
+      LIFE_RADIO_CENTRAL_HOST: 0.0.0.0
+      LIFE_RADIO_CENTRAL_PORT: 8091
+      LIFE_LINK_CONTAINER_MANAGEMENT: "1"
+      LIFE_LINK_MANAGEMENT_HOST: 0.0.0.0
+      LIFE_LINK_MANAGEMENT_PUBLIC_PORT: ${LIFE_LINK_DOCKER_MANAGEMENT_PORT:-8092}
+    ports:
+      - "127.0.0.1:${LIFE_LINK_DOCKER_DATA_PORT:-8091}:8091"
+      - "127.0.0.1:${LIFE_LINK_DOCKER_MANAGEMENT_PORT:-8092}:8092"
+    volumes:
+      - lifelink-central-data:/var/lib/lifelink
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  lifelink-central-data:

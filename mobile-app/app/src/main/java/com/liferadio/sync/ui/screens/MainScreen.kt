@@ -2,10 +2,12 @@ package com.liferadio.sync.ui.screens
 
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.SpanStyle
@@ -32,6 +35,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.liferadio.sync.data.model.CentralHealthInfo
 import com.liferadio.sync.data.model.CentralStepDevice
 import com.liferadio.sync.data.remote.CentralStepDeviceSelector
@@ -2074,19 +2079,74 @@ private fun formatDuration(seconds: Long): String {
 
 // ==================== 设置页 ====================
 
+@Composable
+private fun SettingsExpandableCard(
+    title: String,
+    summary: String,
+    needsAttention: Boolean = false,
+    initiallyExpanded: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
+    val statusColor = if (needsAttention) Warning else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (needsAttention) Icons.Filled.WarningAmber else Icons.Filled.Settings,
+                    contentDescription = null,
+                    tint = statusColor
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(summary, style = MaterialTheme.typography.bodySmall, color = statusColor)
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (expanded) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(modifier = Modifier.height(12.dp))
+                content()
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var invitationText by rememberSaveable { mutableStateOf("") }
     var showRebind by rememberSaveable { mutableStateOf(!uiState.centralTokenConfigured) }
-    var showAdvanced by rememberSaveable { mutableStateOf(false) }
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val granted = permissions[android.Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             permissions[android.Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (granted) viewModel.setLocationTrackingEnabled(true) else viewModel.refreshLocationStatus()
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshBackgroundRuntimeStatus()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -2107,20 +2167,90 @@ private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Mo
         }
 
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            val centralNeedsAttention = !uiState.centralTokenConfigured || uiState.centralReachable == false
+            SettingsExpandableCard(
+                title = "中央服务",
+                summary = when {
+                    !uiState.centralTokenConfigured -> "未绑定中央服务"
+                    uiState.centralReachable == false -> "中央服务暂不可达"
+                    else -> "已绑定，点击查看连接与配对选项"
+                },
+                needsAttention = centralNeedsAttention,
+                initiallyExpanded = centralNeedsAttention
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("业务日起点", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                    Text(
-                        "${uiState.sharedDayStartHour.toString().padStart(2, '0')}:00",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        color = if (uiState.centralTokenConfigured) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            if (uiState.centralTokenConfigured) "已绑定" else "未绑定",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (uiState.centralTokenConfigured) MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "手机仅向已绑定的中央服务上传本机数据。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (uiState.centralBaseUrl.isNotBlank()) {
+                    Text(uiState.centralBaseUrl, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                if (uiState.centralTokenConfigured && !showRebind) {
+                    OutlinedButton(onClick = { showRebind = true }) { Text("重新绑定") }
+                } else {
+                    OutlinedTextField(
+                        value = invitationText,
+                        onValueChange = { invitationText = it },
+                        label = { Text("设备配对码（LR1）") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation()
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            viewModel.previewCentralInvitation(invitationText)
+                            invitationText = ""
+                        }, enabled = invitationText.trim().startsWith("LR1.")) {
+                            Text("检查配对码")
+                        }
+                        if (uiState.centralTokenConfigured) {
+                            OutlinedButton(onClick = {
+                                showRebind = false
+                                invitationText = ""
+                            }) { Text("取消") }
+                        }
+                    }
+                }
+                uiState.invitationPreview?.let { preview ->
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("中央地址：${preview.centralBaseUrl}", style = MaterialTheme.typography.bodySmall)
+                    Text("权限：${preview.permissionLabel}", style = MaterialTheme.typography.bodySmall)
+                    Text("有效期至：${preview.expiresAt}", style = MaterialTheme.typography.bodySmall)
+                    Text("本机名：${preview.deviceName}", style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { viewModel.confirmCentralInvitation() }, enabled = !uiState.enrollmentInProgress) {
+                            Text(if (uiState.enrollmentInProgress) "正在绑定…" else "确认绑定")
+                        }
+                        OutlinedButton(onClick = { viewModel.cancelCentralInvitation() }, enabled = !uiState.enrollmentInProgress) {
+                            Text("取消")
+                        }
+                    }
+                }
+                if (uiState.enrollmentMessage.isNotBlank()) Text(uiState.enrollmentMessage, style = MaterialTheme.typography.bodySmall)
+                if (uiState.centralLastStatus.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        if (uiState.sharedSettingsLoadedFromCentral) "由中央统一设置，手机端只读"
-                        else "等待从中央服务获取统一设置",
+                        uiState.centralLastStatus,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2129,14 +2259,97 @@ private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Mo
         }
 
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            val setupComplete = uiState.batteryOptimizationDisabled && uiState.backgroundAutostartConfirmed
+            SettingsExpandableCard(
+                title = "后台运行",
+                summary = if (setupComplete) "后台运行设置已完成" else "需要完成后台保活设置",
+                needsAttention = !setupComplete,
+                initiallyExpanded = !setupComplete
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("采集与权限", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("应用使用采集", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Text(
+                        "本应用需要确保后台运行，否则无法正确收集数据。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("1. 允许后台运行", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Text(
+                        if (uiState.batteryOptimizationDisabled) "当前状态：已允许" else "当前状态：未允许",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (uiState.batteryOptimizationDisabled) Success else Warning
+                    )
+                    Text(
+                        if (uiState.batteryOptimizationDisabled) "已允许：系统未对 Life Link 限制电池优化。"
+                        else "请在系统的电池设置中，将 Life Link 设为“不受限制”或关闭电池优化。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (uiState.batteryOptimizationDisabled) Success else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedButton(onClick = {
+                        context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        })
+                    }) { Text("打开系统设置") }
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text("2. 允许自启动", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Text(
+                        if (uiState.backgroundAutostartConfirmed) "当前状态：已确认" else "当前状态：待确认",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (uiState.backgroundAutostartConfirmed) Success else Warning
+                    )
+                    Text(
+                        if (uiState.backgroundAutostartConfirmed) "已确认：已按当前手机系统的设置允许自启动。"
+                        else "请在手机管家、权限管理或应用设置中允许 Life Link 自启动。不同品牌的位置可能不同。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (uiState.backgroundAutostartConfirmed) Success else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "Android 不提供统一接口读取厂商的自启动开关；完成设置后请点“已设置”。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            })
+                        }) { Text("打开应用设置") }
+                        if (!uiState.backgroundAutostartConfirmed) {
+                            Button(onClick = { viewModel.confirmBackgroundAutostart() }) { Text("已设置") }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text("3. 锁定最近任务", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Text(
+                        "打开系统最近任务，长按 Life Link 卡片，选择“锁定”或“加锁”。这样可减少系统清理后台进程的概率。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+            }
+        }
+
+        item {
+            val usageNeedsAttention = !uiState.usageStatsPermissionGranted
+            val locationNeedsAttention = !uiState.locationTrackingEnabled || !uiState.locationPermissionGranted
+            SettingsExpandableCard(
+                title = "采集与权限",
+                summary = when {
+                    usageNeedsAttention && locationNeedsAttention -> "应用使用和位置采集均需设置"
+                    usageNeedsAttention -> "应用使用采集需要授权"
+                    locationNeedsAttention -> "位置采集需要设置"
+                    else -> "应用使用和位置采集均已就绪"
+                },
+                needsAttention = usageNeedsAttention || locationNeedsAttention,
+                initiallyExpanded = usageNeedsAttention || locationNeedsAttention
+            ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (usageNeedsAttention) {
+                            Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = Warning)
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        Text("应用使用采集", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    }
                     Text(
                         if (uiState.usageStatsPermissionGranted) "已允许读取应用使用情况，用于生成每日使用记录。"
                         else "需要在系统设置中允许 Life Link 访问应用使用情况。",
@@ -2161,7 +2374,13 @@ private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Mo
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("位置采集", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (locationNeedsAttention) {
+                                    Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = Warning)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                }
+                                Text("位置采集", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            }
                             Text(
                                 if (uiState.locationPermissionGranted) {
                                     "已获得位置权限。采集频率会根据活动状态自动调整。"
@@ -2188,114 +2407,14 @@ private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Mo
                             }
                         )
                     }
-                }
             }
         }
 
         item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("中央服务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Spacer(modifier = Modifier.weight(1f))
-                            Surface(
-                                color = if (uiState.centralTokenConfigured) MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.surfaceVariant,
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text(
-                                    if (uiState.centralTokenConfigured) "已绑定" else "未绑定",
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (uiState.centralTokenConfigured) MaterialTheme.colorScheme.onPrimaryContainer
-                                    else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            "手机仅向已绑定的中央服务上传本机数据。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (uiState.centralBaseUrl.isNotBlank()) {
-                            Text(uiState.centralBaseUrl, style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        if (uiState.centralTokenConfigured && !showRebind) {
-                            OutlinedButton(onClick = { showRebind = true }) { Text("重新绑定") }
-                        } else {
-                            OutlinedTextField(
-                                value = invitationText,
-                                onValueChange = { invitationText = it },
-                                label = { Text("设备配对码（LR1）") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                visualTransformation = PasswordVisualTransformation()
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = {
-                                    viewModel.previewCentralInvitation(invitationText)
-                                    invitationText = ""
-                                }, enabled = invitationText.trim().startsWith("LR1.")) {
-                                    Text("检查配对码")
-                                }
-                                if (uiState.centralTokenConfigured) {
-                                    OutlinedButton(onClick = {
-                                        showRebind = false
-                                        invitationText = ""
-                                    }) { Text("取消") }
-                                }
-                            }
-                        }
-                        uiState.invitationPreview?.let { preview ->
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text("中央地址：${preview.centralBaseUrl}", style = MaterialTheme.typography.bodySmall)
-                            Text("权限：${preview.permissionLabel}", style = MaterialTheme.typography.bodySmall)
-                            Text("有效期至：${preview.expiresAt}", style = MaterialTheme.typography.bodySmall)
-                            Text("本机名：${preview.deviceName}", style = MaterialTheme.typography.bodySmall)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { viewModel.confirmCentralInvitation() }, enabled = !uiState.enrollmentInProgress) {
-                                    Text(if (uiState.enrollmentInProgress) "正在绑定…" else "确认绑定")
-                                }
-                                OutlinedButton(onClick = { viewModel.cancelCentralInvitation() }, enabled = !uiState.enrollmentInProgress) {
-                                    Text("取消")
-                                }
-                            }
-                        }
-                        if (uiState.enrollmentMessage.isNotBlank()) Text(uiState.enrollmentMessage, style = MaterialTheme.typography.bodySmall)
-                        if (uiState.centralLastStatus.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                uiState.centralLastStatus,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        TextButton(onClick = { showAdvanced = !showAdvanced }) {
-                            Text(if (showAdvanced) "收起高级信息" else "高级信息")
-                        }
-                        if (showAdvanced) {
-                            Text("设备 ID", style = MaterialTheme.typography.labelMedium)
-                            Text(uiState.centralDeviceId, style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-        }
-
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            SettingsExpandableCard(
+                title = "自动同步",
+                summary = "当前每 ${uiState.syncIntervalMinutes} 分钟同步一次"
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("自动同步", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text(
                         "选择手机后台上传数据的频率",
                         style = MaterialTheme.typography.bodySmall,
@@ -2313,7 +2432,6 @@ private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Mo
                             }
                         }
                     }
-                }
             }
         }
 

@@ -144,12 +144,12 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
 
     def _allowed_host(self) -> bool:
         host = self.headers.get("Host", "")
-        expected = f"127.0.0.1:{self.server.server_address[1]}"
+        expected = f"127.0.0.1:{management_public_port(self.server.server_address[1])}"
         return hmac.compare_digest(host, expected)
 
     def _same_origin(self) -> bool:
         origin = self.headers.get("Origin")
-        expected = f"http://127.0.0.1:{self.server.server_address[1]}"
+        expected = f"http://127.0.0.1:{management_public_port(self.server.server_address[1])}"
         return origin is not None and hmac.compare_digest(origin, expected)
 
     def _send(self, status: int, payload: Any, content_type: str = "application/json; charset=utf-8") -> None:
@@ -931,11 +931,51 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
             threading.Thread(target=self.server.shutdown_callback, daemon=True).start()
 
 
-def create_management_server(data_server: Any, config: CentralConfig, address: tuple[str, int] = (MANAGEMENT_HOST, MANAGEMENT_PORT),
+def management_bind_host(environ: dict[str, str] | None = None) -> str:
+    """Return the only management bind addresses allowed by a deployment.
+
+    The normal process is permanently loopback-only.  A container may opt in
+    to an all-interface *container-internal* bind, but its port must still be
+    published only on the Linux host loopback interface by the Compose file.
+    This opt-in exists because Docker cannot forward a host port to a process
+    bound to the container's own 127.0.0.1.
+    """
+    env = os.environ if environ is None else environ
+    requested = env.get("LIFE_LINK_MANAGEMENT_HOST", MANAGEMENT_HOST)
+    if requested == MANAGEMENT_HOST:
+        return MANAGEMENT_HOST
+    if requested == "0.0.0.0" and env.get("LIFE_LINK_CONTAINER_MANAGEMENT") == "1":
+        return requested
+    raise ValueError("management service must bind only to 127.0.0.1")
+
+
+def management_public_port(default_port: int, environ: dict[str, str] | None = None) -> int:
+    """Return the host-loopback port accepted by the management Host guard.
+
+    Docker normally maps the internal 8092 port to host 8092. Local smoke
+    tests may choose another loopback host port to avoid an existing Windows
+    central service; accepting that value must remain an explicit setting.
+    """
+    env = os.environ if environ is None else environ
+    raw_value = env.get("LIFE_LINK_MANAGEMENT_PUBLIC_PORT")
+    if raw_value is None:
+        return default_port
+    try:
+        port = int(raw_value)
+    except ValueError as error:
+        raise ValueError("management public port must be an integer") from error
+    if not 1 <= port <= 65535:
+        raise ValueError("management public port must be between 1 and 65535")
+    return port
+
+
+def create_management_server(data_server: Any, config: CentralConfig, address: tuple[str, int] | None = None,
                              shutdown_callback: Callable[[], None] | None = None) -> ManagementHTTPServer:
-    if address[0] != MANAGEMENT_HOST:
+    allowed_host = management_bind_host()
+    selected_address = address or (allowed_host, MANAGEMENT_PORT)
+    if selected_address[0] != allowed_host:
         raise ValueError("management service must bind only to 127.0.0.1")
-    management = ManagementHTTPServer(address, data_server, config, shutdown_callback)
+    management = ManagementHTTPServer(selected_address, data_server, config, shutdown_callback)
     # The public HTTPS data service validates browser sessions, then forwards
     # authenticated page operations here over loopback.  The management server
     # itself remains permanently loopback-only.

@@ -521,6 +521,26 @@
   white-space: nowrap;
 }
 .rank-empty { text-align: center; padding: 30px; color: var(--text-secondary); font-size: 14px; }
+.website-collection-hint {
+  min-height: 190px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 22px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.website-collection-hint p { margin: 0; color: var(--text); font-size: 15px; font-weight: 600; }
+.website-collection-hint span { max-width: 300px; }
+.website-collection-hint a { color: var(--accent); font-weight: 600; text-decoration: none; }
+.website-collection-hint a:hover { text-decoration: underline; }
+.website-collection-hint a i { width: 13px; height: 13px; vertical-align: -2px; }
 
 /* Health information: central-derived reference values, compact on narrow screens. */
 .health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-bottom: 20px; }

@@ -1333,6 +1333,8 @@ class WindowsTrayIcon:
     WM_RBUTTONUP = 0x0205
     WM_CONTEXTMENU = 0x007B
     WM_NULL = 0x0000
+    WM_QUERYENDSESSION = 0x0011
+    WM_ENDSESSION = 0x0016
     PM_REMOVE = 0x0001
     NIM_ADD = 0x00000000
     NIM_MODIFY = 0x00000001
@@ -1494,6 +1496,16 @@ class WindowsTrayIcon:
             self.owns_icon = False
 
     def _window_proc(self, hwnd: int, message: int, wparam: int, lparam: int) -> int:
+        # Acknowledge Windows' shutdown query without waiting for the sync
+        # worker.  The confirmed end-session message is queued back onto the
+        # Tk owner thread, where normal resource cleanup is safe.
+        if message == self.WM_QUERYENDSESSION:
+            return 1
+        if message == self.WM_ENDSESSION:
+            if wparam:
+                self.command_queue.put("system-exit")
+                self.user32.PostMessageW(hwnd, self.WM_NULL, 0, 0)
+            return 0
         if message == self.CALLBACK_MESSAGE:
             if lparam == self.WM_LBUTTONUP:
                 self.command_queue.put("status")
@@ -1564,6 +1576,8 @@ class WindowsTrayIcon:
                 self.toggle_login_startup()
             elif command == "exit":
                 self.exit_application()
+            elif command == "system-exit":
+                self.exit_application(system_shutdown=True)
         if not self.closed:
             self.pump_job = self.root.after(50, self.pump_messages)
 
@@ -1807,7 +1821,7 @@ class LifeRadioDesktopApp:
         if self.tray is not None:
             self.tray.notify(title, message)
 
-    def stop_server(self) -> None:
+    def stop_server(self, *, system_shutdown: bool = False) -> None:
         process = self.server_process
         if process is not None and process.poll() is None:
             try:
@@ -1815,18 +1829,18 @@ class LifeRadioDesktopApp:
                 # CTRL_BREAK_EVENT to such a process can raise WinError 6 and
                 # leave a stale sync server plus desktop mutex behind.
                 process.terminate()
-                process.wait(timeout=5)
+                process.wait(timeout=1.5 if system_shutdown else 5)
             except (OSError, SystemError, subprocess.TimeoutExpired):
                 process.terminate()
                 try:
-                    process.wait(timeout=3)
+                    process.wait(timeout=1.0 if system_shutdown else 3)
                 except subprocess.TimeoutExpired:
                     process.kill()
         if self.server_log_handle is not None:
             self.server_log_handle.close()
             self.server_log_handle = None
 
-    def exit_application(self) -> None:
+    def exit_application(self, *, system_shutdown: bool = False) -> None:
         if self.quitting:
             return
         self.quitting = True
@@ -1834,7 +1848,7 @@ class LifeRadioDesktopApp:
             self.status_window.destroy()
         if self.tray is not None:
             self.tray.close()
-        self.stop_server()
+        self.stop_server(system_shutdown=system_shutdown)
         if self.mutex_handle and sys.platform == "win32":
             ctypes.windll.kernel32.CloseHandle(self.mutex_handle)
             self.mutex_handle = None
@@ -1936,10 +1950,9 @@ class LifeRadioDesktopApp:
         self.root.after(1_000, self.monitor_server)
         if not os.environ.get("LIFE_RADIO_NO_BROWSER"):
             self.root.after(100, self.open_dashboard)
-        # Let the browser launch first, then surface the status window so it is
-        # visible even when the persisted topmost option is disabled.
-        if not os.environ.get("LIFE_RADIO_BACKGROUND_START"):
-            self.root.after(400, self.open_status)
+        # A visible status window is the immediate confirmation that the PC
+        # collector is running.  Background start suppresses only the browser.
+        self.root.after(400, self.open_status)
         self.root.mainloop()
         return 0
 
