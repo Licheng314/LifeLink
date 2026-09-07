@@ -21,7 +21,10 @@ COPY --chown=lifelink:lifelink central/ ./central/
 COPY --chown=lifelink:lifelink management-web/ ./management-web/
 COPY --chown=lifelink:lifelink central_server.py central_windows_startup.py central_endpoint.py configure_tailscale_endpoint.py ./
 COPY --chown=lifelink:lifelink docker-entrypoint.sh ./
-RUN chmod 0555 docker-entrypoint.sh
+# Defend against CRLF from a Windows build context: otherwise Linux reads the
+# shebang interpreter as /bin/sh\r and reports the script as missing.
+RUN sed -i 's/\r$//' docker-entrypoint.sh \
+    && chmod 0555 docker-entrypoint.sh
 
 USER lifelink
 VOLUME ["/var/lib/lifelink"]

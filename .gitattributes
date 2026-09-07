@@ -4,3 +4,6 @@
 # Windows Command Prompt parses UTF-8/LF batch files unreliably.
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Docker's Linux entrypoint requires a Unix shebang and must never gain CRLF.
+*.sh text eol=lf
