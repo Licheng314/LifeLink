@@ -92,8 +92,16 @@ if ([string]::IsNullOrWhiteSpace($githubCliPath)) {
 }
 
 $tag = "android-v$versionName"
-& $githubCliPath release view $tag 2>$null
-if ($LASTEXITCODE -eq 0) {
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & $githubCliPath release view $tag 2>$null
+    $releaseViewExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+if ($releaseViewExitCode -eq 0) {
     throw "GitHub Release '$tag' already exists; refusing to overwrite it."
 }
 
