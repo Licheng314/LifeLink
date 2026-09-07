@@ -107,8 +107,12 @@ if ($releaseViewExitCode -eq 0) {
 
 # The stable asset name is the target of README's /releases/latest/download link.
 Copy-Item -LiteralPath $targetApk -Destination $stableApk -Force
+$targetCommit = (git rev-parse HEAD).Trim()
+if ([string]::IsNullOrWhiteSpace($targetCommit)) {
+    throw "Unable to resolve the committed release target."
+}
 Write-Host "=== Publishing GitHub Release $tag ==="
-& $githubCliPath release create $tag $targetApk $checksumPath $stableApk --target HEAD --title "Life Link Android v$versionName" --generate-notes
+& $githubCliPath release create $tag $targetApk $checksumPath $stableApk --target $targetCommit --title "Life Link Android v$versionName" --generate-notes
 if ($LASTEXITCODE -ne 0) {
     throw "GitHub Release creation failed with exit code $LASTEXITCODE"
 }
