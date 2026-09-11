@@ -297,6 +297,8 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
         return True
 
     def _proxy_web_api(self, method: str) -> None:
+        from .management import management_public_port
+
         session = self._web_session()
         if session is None:
             self.send_json(401, {"error": "web_session_required"}); return
@@ -312,7 +314,9 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             if size < 0 or size > self.server.config.max_body_bytes: raise ValueError
             body = self.rfile.read(size) if size else None
             connection = http.client.HTTPConnection("127.0.0.1", management.server_port, timeout=15)
-            headers = {"Host": f"127.0.0.1:{management.server_port}", "Origin": f"http://127.0.0.1:{management.server_port}", "X-CSRF-Token": management.csrf_token}
+            public_port = management_public_port(management.server_port)
+            management_origin = f"http://127.0.0.1:{public_port}"
+            headers = {"Host": f"127.0.0.1:{public_port}", "Origin": management_origin, "X-CSRF-Token": management.csrf_token}
             if self.headers.get("Content-Type"): headers["Content-Type"] = self.headers["Content-Type"]
             if self.headers.get("If-None-Match"): headers["If-None-Match"] = self.headers["If-None-Match"]
             connection.request(method, self.path, body=body, headers=headers)

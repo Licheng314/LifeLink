@@ -308,6 +308,30 @@ class CentralManagementTests(unittest.TestCase):
         with self.client.open(api) as response:
             self.assertEqual(response.headers["Cache-Control"], "no-store")
 
+    def test_https_web_session_proxy_uses_configured_public_management_port(self):
+        create = Request(
+            self.data_base + "/v1/web-sessions", data=b"{}",
+            headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.client.open(create) as response:
+            web_url = json.loads(response.read())["web_url"]
+        bootstrap = parse_qs(urlparse(web_url).fragment)["lifelink_bootstrap"][0]
+        claim = Request(
+            self.data_base + "/v1/web-sessions/claim",
+            data=json.dumps({"bootstrap_token": bootstrap}).encode(),
+            headers={"Origin": "https://old.example", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.client.open(claim) as response:
+            cookie = response.headers["Set-Cookie"].split(";", 1)[0]
+
+        with mock.patch.dict(os.environ, {"LIFE_LINK_MANAGEMENT_PUBLIC_PORT": "18092"}):
+            request = Request(self.data_base + "/api/settings", headers={"Cookie": cookie})
+            with self.client.open(request) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn("day_start_hour", json.loads(response.read()))
+
     def test_copied_dashboard_settings_write_keeps_csrf_boundary(self):
         status, payload = self.request("/api/settings", {"day_start_hour": 4}, csrf=False)
         self.assertEqual(status, 403)
