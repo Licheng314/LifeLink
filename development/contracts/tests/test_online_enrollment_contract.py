@@ -53,7 +53,11 @@ class OnlineEnrollmentContractTests(unittest.TestCase):
         properties = self.invitation_schema["properties"]
         self.assertEqual(properties["v"]["const"], 1)
         self.assertEqual(properties["scope"]["enum"], ["upload", "dashboard"])
-        self.assertTrue(properties["central_base_url"]["pattern"].startswith("^https://"))
+        base_url_pattern = properties["central_base_url"]["pattern"]
+        self.assertIsNotNone(re.fullmatch(base_url_pattern, "https://central.example.test"))
+        self.assertIsNotNone(re.fullmatch(base_url_pattern, "http://127.0.0.1:8091"))
+        self.assertIsNone(re.fullmatch(base_url_pattern, "http://central.example.test"))
+        self.assertIsNone(re.fullmatch(base_url_pattern, "http://localhost:8091"))
         self.assertGreaterEqual(properties["invitation_token"]["minLength"], 32)
         self.assertEqual(properties["expires_at"]["pattern"], "Z$")
 

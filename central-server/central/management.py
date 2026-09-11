@@ -55,6 +55,7 @@ STATIC_ASSETS = {
     "assets/scripts/devices.js": "application/javascript; charset=utf-8",
     "assets/scripts/health-info.js": "application/javascript; charset=utf-8",
     "assets/scripts/location.js": "application/javascript; charset=utf-8",
+    "assets/scripts/time-intervals.js": "application/javascript; charset=utf-8",
     "assets/scripts/shared-ui.js": "application/javascript; charset=utf-8",
     "assets/scripts/tools.js": "application/javascript; charset=utf-8",
     "assets/scripts/usage.js": "application/javascript; charset=utf-8",
@@ -63,6 +64,7 @@ STATIC_ASSETS = {
     "assets/styles/central-management.css": "text/css; charset=utf-8",
     "assets/styles/components.css": "text/css; charset=utf-8",
     "assets/styles/tools.css": "text/css; charset=utf-8",
+    "assets/styles/time-intervals.css": "text/css; charset=utf-8",
     "assets/styles/wishes-events.css": "text/css; charset=utf-8",
     "assets/vendor/leaflet/leaflet.css": "text/css; charset=utf-8",
     "assets/vendor/leaflet/leaflet.js": "application/javascript; charset=utf-8",
@@ -268,7 +270,7 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
             self._send(200, self._status()); return
         if path == "/api/identity":
             self._send(200, {"service": "life-link-management", "version": 1,
-                             "management_url": f"http://127.0.0.1:{self.server.server_address[1]}",
+                             "management_url": management_local_url(self.server.server_address[1]),
                              "data_api_port": self.server.config.port}); return
         if path == "/api/ai-reader-skill":
             try:
@@ -298,7 +300,7 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
         if path in {
             "/api/calendar-days", "/api/timeline-events", "/api/usage", "/api/locations",
             "/api/health-info", "/api/settings", "/api/devices", "/api/device-management",
-            "/api/wishes", "/api/event-triggers", "/api/trigger-types", "/api/event-background",
+            "/api/wishes", "/api/event-triggers", "/api/trigger-types", "/api/event-background", "/api/time-intervals",
             "/api/ai-readers", "/api/blacklist/rules", "/api/live-usage", "/api/central-health",
         }:
             self._pc_read_compat(path, parse_qs(parsed.query, keep_blank_values=True)); return
@@ -387,6 +389,9 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/settings":
                 self._require_exact_params(params, set())
                 payload = store.get_shared_settings()
+            elif path == "/api/time-intervals":
+                self._require_exact_params(params, set())
+                payload = {"intervals": store.list_time_intervals(), "state": store.time_interval_state()}
             elif path == "/api/wishes":
                 if set(params) - {"include_archived"} or any(len(values) != 1 for values in params.values()):
                     raise ValueError("invalid wishes query")
@@ -558,6 +563,7 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/shutdown": self._shutdown(); return
         if not self._protected(): return
         if path == "/api/device-invitations": self._create_invitation(); return
+        if path == "/api/local-device-invitations": self._create_local_invitation(); return
         if path == "/api/ai-connection-package": self._create_package(); return
         if path == "/api/network/verify": self._verify_network(); return
         if path == "/api/network/tailscale/detect": self._detect_tailscale(); return
@@ -566,7 +572,7 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
             self._ai_reader_clear_progress(path); return
         if path == "/api/wishes" or path.startswith("/api/wishes/"):
             self._wish_write_compat("POST", path); return
-        if (path == "/api/settings" or path.startswith("/api/device-management/")
+        if (path == "/api/settings" or path == "/api/time-intervals" or path.startswith("/api/time-intervals/") or path.startswith("/api/device-management/")
                 or path.startswith("/api/blacklist/rules") or path.startswith("/api/event-triggers")):
             self._pc_write_compat("POST", path); return
         self._send(404, {"error": "not_found"})
@@ -740,6 +746,28 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
                 body = self._body()
                 if body is None: return
                 self._send(200, store.update_shared_settings(body)); return
+            if path == "/api/time-intervals":
+                if method != "POST":
+                    self._send(405, {"error": "method_not_allowed"}); return
+                body = self._body()
+                if body is None: return
+                self._send(201, store.create_time_interval(body)); return
+            if path.startswith("/api/time-intervals/"):
+                interval_id = path.removeprefix("/api/time-intervals/")
+                if not interval_id or "/" in interval_id:
+                    self._send(404, {"error": "not_found"}); return
+                if method == "DELETE":
+                    if not store.delete_time_interval(interval_id):
+                        self._send(404, {"error": "time_interval_not_found"}); return
+                    self._send(204, b"", "application/json; charset=utf-8"); return
+                if method != "PATCH":
+                    self._send(405, {"error": "method_not_allowed"}); return
+                body = self._body()
+                if body is None: return
+                updated = store.update_time_interval(interval_id, body)
+                if updated is None:
+                    self._send(404, {"error": "time_interval_not_found"}); return
+                self._send(200, updated); return
             if path == "/api/blacklist/rules":
                 if method != "POST":
                     self._send(405, {"error": "method_not_allowed"}); return
@@ -850,6 +878,24 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
             self._send(201, {"code": created.code, "expires_at": created.expires_at})
         except (ValueError, OSError) as error:
             self._send(409, {"error": "invitation_unavailable", "message": str(error)})
+
+    def _create_local_invitation(self) -> None:
+        """Issue a desktop-only invitation for the current host's loopback API.
+
+        This route deliberately does not consult or modify ``public_endpoint``.
+        Its exact 127.0.0.1 address makes the resulting code unusable from a
+        different computer, including a phone on the same LAN.
+        """
+        try:
+            created = create_invitation(
+                self.server.data_server.store,
+                central_base_url=data_local_url(self.server.config.port),
+                scope="dashboard",
+                lifetime=timedelta(hours=24),
+            )
+            self._send(201, {"code": created.code, "expires_at": created.expires_at, "local_only": True})
+        except (ValueError, OSError) as error:
+            self._send(409, {"error": "local_invitation_unavailable", "message": str(error)})
 
     def _configured_endpoint(self) -> dict[str, Any]:
         if self.server.config.config_path is None: raise ValueError("中央配置不可写，无法签发远程设备配对码")
@@ -967,6 +1013,30 @@ def management_public_port(default_port: int, environ: dict[str, str] | None = N
     if not 1 <= port <= 65535:
         raise ValueError("management public port must be between 1 and 65535")
     return port
+
+
+def management_local_url(default_port: int = MANAGEMENT_PORT, environ: dict[str, str] | None = None) -> str:
+    """Return the browser address published on this host, never a bind wildcard."""
+    return f"http://127.0.0.1:{management_public_port(default_port, environ)}"
+
+
+def data_public_port(default_port: int, environ: dict[str, str] | None = None) -> int:
+    """Return the host-loopback data port encoded in a local desktop invitation."""
+    env = os.environ if environ is None else environ
+    raw_value = env.get("LIFE_LINK_DATA_PUBLIC_PORT")
+    if raw_value is None:
+        return default_port
+    try:
+        port = int(raw_value)
+    except ValueError as error:
+        raise ValueError("data public port must be an integer") from error
+    if not 1 <= port <= 65535:
+        raise ValueError("data public port must be between 1 and 65535")
+    return port
+
+
+def data_local_url(default_port: int, environ: dict[str, str] | None = None) -> str:
+    return f"http://127.0.0.1:{data_public_port(default_port, environ)}"
 
 
 def create_management_server(data_server: Any, config: CentralConfig, address: tuple[str, int] | None = None,

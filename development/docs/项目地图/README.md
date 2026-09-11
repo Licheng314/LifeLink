@@ -4,7 +4,7 @@
 
 - Obsidian 全量项目地图：[`Life Link 项目地图.canvas`](Life%20Link%20项目地图.canvas)。
 - 面向沟通的现役架构总览：[`Life Link 架构总览.html`](Life%20Link%20架构总览.html)，其可编辑源文件为 [`Life Link 架构总览.architecture.json`](Life%20Link%20架构总览.architecture.json)。
-- 面向新用户的基础连接拓扑：[`Life Link 基础连接拓扑.html`](Life%20Link%20基础连接拓扑.html)，其可编辑源文件为 [`Life Link 基础连接拓扑.architecture.json`](Life%20Link%20基础连接拓扑.architecture.json)。
+- 面向新用户的基础连接拓扑：[`静态拓扑图`](../../../assets/readme/life-link-topology.svg)，其可编辑源文件为 [`Life Link 基础连接拓扑.architecture.json`](Life%20Link%20基础连接拓扑.architecture.json)。静态图只保留连接关系与颜色图例；不显示查看器标题、工具栏或导航控件。
 
 架构总览由 Archify 生成，聚焦当前数据流、本地体验与 AI 被动读取链路；它不替代 Canvas 地图，也不引入运行时依赖。
 

@@ -1,0 +1,9 @@
+# Public HTTPS entry for a self-hosted Life Link central service.
+# Caddy obtains and renews the certificate after this hostname resolves to
+# the server and TCP ports 80 and 443 are reachable from the Internet.
+{$LIFE_LINK_PUBLIC_DOMAIN} {
+    encode zstd gzip
+    # Keep 8091 and 8092 bound to host loopback.  Caddy reaches the central
+    # data service over the private Compose network; it never proxies 8092.
+    reverse_proxy central:8091
+}

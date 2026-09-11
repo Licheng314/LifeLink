@@ -2,114 +2,40 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Life Link 基础连接拓扑",
+    "title": "Life Link 连接拓扑",
     "locale": "zh-CN",
     "quality_profile": "showcase",
-    "viewBox": [1100, 650]
+    "viewBox": [1240, 650],
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "frontend": { "label": "客户端与 WebUI" },
+        "backend": { "label": "中央服务" },
+        "database": { "label": "长期数据" },
+        "cloud": { "label": "网络" },
+        "external": { "label": "AI 伴侣" }
+      }
+    }
   },
   "components": [
-    {
-      "id": "ai_companion",
-      "type": "external",
-      "label": "AI 伴侣",
-      "sublabel": "通过 MCP 读取生活上下文",
-      "pos": [100, 105],
-      "size": [220, 82]
-    },
-    {
-      "id": "central_server",
-      "type": "backend",
-      "label": "Life Link 服务端",
-      "sublabel": "中央数据与配对服务",
-      "pos": [100, 285],
-      "size": [220, 82]
-    },
-    {
-      "id": "pc_client_1",
-      "type": "frontend",
-      "label": "PC 客户端 1",
-      "sublabel": "本机数据采集与 WebUI",
-      "pos": [100, 465],
-      "size": [220, 82]
-    },
-    {
-      "id": "https_tunnel",
-      "type": "cloud",
-      "label": "HTTPS 公网入口",
-      "sublabel": "Tailscale 或花生壳内网穿透",
-      "pos": [440, 285],
-      "size": [240, 82]
-    },
-    {
-      "id": "pc_client_2",
-      "type": "frontend",
-      "label": "PC 客户端 2",
-      "sublabel": "远程电脑",
-      "pos": [815, 175],
-      "size": [210, 82]
-    },
-    {
-      "id": "android_client",
-      "type": "frontend",
-      "label": "Android 客户端",
-      "sublabel": "手机采集与同步",
-      "pos": [815, 395],
-      "size": [210, 82]
-    }
+    { "id": "pc_client", "type": "frontend", "label": "PC 客户端", "sublabel": "采集、缓存与上传", "pos": [55, 130], "size": [225, 76] },
+    { "id": "android_client", "type": "frontend", "label": "Android 客户端", "sublabel": "手机采集与同步", "pos": [55, 315], "size": [225, 76] },
+    { "id": "ai_companion", "type": "external", "label": "AI 伴侣 / Agent", "sublabel": "MCP 只读读取", "pos": [355, 500], "size": [235, 76] },
+    { "id": "network", "type": "cloud", "label": "网络", "sublabel": "统一 HTTPS 连接", "pos": [360, 245], "size": [220, 76] },
+    { "id": "central_server", "type": "backend", "label": "Life Link 中央服务", "sublabel": "统一数据、同步与配对", "brand": "docker", "pos": [860, 135], "size": [250, 76] },
+    { "id": "central_database", "type": "database", "label": "SQLite 长期库", "sublabel": "持久化存储", "pos": [690, 365], "size": [235, 76] },
+    { "id": "central_webui", "type": "frontend", "label": "中央 WebUI", "sublabel": "查看与管理", "pos": [950, 365], "size": [235, 76] }
   ],
   "boundaries": [
-    {
-      "kind": "region",
-      "label": "同一台电脑",
-      "wraps": ["ai_companion", "central_server", "pc_client_1"],
-      "pad": 32
-    }
+    { "kind": "region", "label": "云端中央服务", "wraps": ["central_server", "central_database", "central_webui"], "pad": 32 },
+    { "kind": "region", "label": "用户设备", "wraps": ["pc_client", "android_client"], "pad": 26 }
   ],
   "connections": [
-    {
-      "id": "ai_read",
-      "from": "ai_companion",
-      "to": "central_server",
-      "label": "MCP 只读访问",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "labelDy": 24,
-      "variant": "emphasis"
-    },
-    {
-      "id": "local_sync",
-      "from": "pc_client_1",
-      "to": "central_server",
-      "label": "本机采集与同步",
-      "fromSide": "top",
-      "toSide": "bottom"
-    },
-    {
-      "id": "remote_pc_https",
-      "from": "pc_client_2",
-      "to": "https_tunnel",
-      "label": "HTTPS 上传与读取",
-      "fromSide": "left",
-      "toSide": "right",
-      "variant": "security"
-    },
-    {
-      "id": "android_https",
-      "from": "android_client",
-      "to": "https_tunnel",
-      "label": "HTTPS 上传与读取",
-      "fromSide": "left",
-      "toSide": "right",
-      "variant": "security"
-    },
-    {
-      "id": "tunnel_forward",
-      "from": "https_tunnel",
-      "to": "central_server",
-      "label": "内网穿透映射至中央端口",
-      "fromSide": "left",
-      "toSide": "right",
-      "variant": "emphasis"
-    }
+    { "id": "pc_https", "from": "pc_client", "to": "network", "label": "HTTPS 同步", "fromSide": "right", "toSide": "left", "variant": "security" },
+    { "id": "android_https", "from": "android_client", "to": "network", "label": "HTTPS 同步", "fromSide": "right", "toSide": "left", "variant": "security" },
+    { "id": "ai_mcp", "from": "ai_companion", "to": "network", "label": "MCP 只读", "fromSide": "top", "toSide": "bottom", "variant": "emphasis" },
+    { "id": "network_to_central", "from": "network", "to": "central_server", "label": "HTTPS", "fromSide": "right", "toSide": "left", "variant": "security" },
+    { "id": "central_to_database", "from": "central_server", "to": "central_database", "label": "持久化", "fromSide": "bottom", "toSide": "top", "labelAt": [828, 295] },
+    { "id": "webui_to_central", "from": "central_webui", "to": "central_server", "label": "查看与管理", "fromSide": "top", "toSide": "bottom", "labelAt": [1077, 295], "variant": "emphasis" }
   ]
 }

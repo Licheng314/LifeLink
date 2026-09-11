@@ -98,7 +98,16 @@ Compose 将数据 API 和管理页都只发布到 **Linux 主机回环地址**�
 ssh -L 8092:127.0.0.1:8092 <linux-user>@<server-host>
 ```
 
-随后在自己的浏览器打开 `http://127.0.0.1:8092`。公网域名、TLS 和反向代理是下一层：反向代理只能转发 `127.0.0.1:8091` 的 `/v1/*`，绝不能代理或映射 8092；阿里云安全组只应开放 HTTPS（以及你管理所需的 SSH），不开放 8091、8092 或 SQLite 文件。
+随后在自己的浏览器打开 `http://127.0.0.1:8092`。公网域名、TLS 和反向代理是下一层：反向代理应把公开请求完整转发给 `127.0.0.1:8091`（包括 `/`、`/assets/*`、`/api/*`、`/map-tiles/*` 和 `/v1/*`），绝不能代理或映射 8092；阿里云安全组只应开放 HTTP/HTTPS（以及你管理所需的 SSH），不开放 8091、8092 或 SQLite 文件。
+
+仓库提供 Caddy 覆盖层作为正式域名部署的最短路径。先让例如 `lifelink.example.com` 的 A 记录指向服务器、在安全组开放 TCP 80 和 443；将 [`.env.public.example`](.env.public.example) 复制为未跟踪的 `.env`，并填入不带 `https://` 的域名。随后执行：
+
+```bash
+docker compose -f compose.yaml -f compose.public.yaml up -d
+curl --fail https://lifelink.example.com/v1/health
+```
+
+`compose.public.yaml` 只增加 Caddy 的 80/443 入口，中央数据端口和管理页仍然只发布到宿主机回环。Caddy 自动申请和续期 TLS 证书；其证书状态保存在独立具名卷中。
 
 本机 Windows 已运行中央服务时，不要停止它，也不要让 Docker 复用其数据目录。可临时改用两个回环测试端口：
 
@@ -207,7 +216,7 @@ Android 与 PC 使用同一套 `LR1` 邀请和设备权限口径。真实手机�
 
 公网域名反向代理、Tailscale Serve 或花生壳等穿透都必须指向中央数据服务 `127.0.0.1:<配置端口>`，不能指向 PC 本地采集服务的 `8090`，也不能指向中央管理 WebUI 的 `8092`。与中央服务同机运行的 PC 客户端使用相同配置端口的回环地址；手机、远程 PC 和所有正式 AI MCP 使用中央 `config.json` 中已验证的 `public_endpoint.base_url` HTTPS 地址。外部地址可暂时未配置，此时远程能力与 AI MCP 配对包均不可用。
 
-先双击 `start_server.bat` 启动中央服务，再从托盘打开 `http://127.0.0.1:8092`。在网络配置中选择公网服务器/域名、Tailscale 或 HTTPS 内网穿透，粘贴最终 HTTPS 地址并验证。成功后保存连接类型、公开地址、验证时间和中央实例身份；失败保留原地址。反向代理必须保留 Authorization 但在日志中脱敏，且不得让 Token 请求跟随重定向。`maintenance/configure_public_endpoint.bat` 仅作为命令行恢复入口。
+先双击 `start_server.bat` 启动中央服务，再从托盘打开 `http://127.0.0.1:8092`。远程设备、远程 PC 或 AI 需要访问时，才在“远程连接（可选）”中选择公网服务器/域名、Tailscale 或 HTTPS 内网穿透，粘贴最终 HTTPS 地址并验证。成功后保存连接类型、公开地址、验证时间和中央实例身份；失败保留原地址。反向代理必须保留 Authorization 但在日志中脱敏，且不得让 Token 请求跟随重定向。仅想在同一台 Windows 主机测试时，可直接生成“本机客户端配对码”；它固定指向 `http://127.0.0.1:<数据端口>`，只能供该主机的 PC 客户端领取，不替代远程 HTTPS 配置。`maintenance/configure_public_endpoint.bat` 仅作为命令行恢复入口。
 
 如需在同一 Tailnet 内私密访问，可在管理 WebUI 选择“自动检测 Tailscale”。它仅检查安装、登录和当前设备 DNS 名称，并把 `https://<设备名>.<tailnet>.ts.net:8443` 候选地址填入文本框；不会创建或修改 Serve 规则、不会验证，也不会保存或覆盖现有地址。请先自行让 Tailscale Serve 转发到 `127.0.0.1:<中央数据端口>`，再点击“验证并保存”。`maintenance/configure_tailscale_endpoint.bat` 保留为恢复入口，也可以手动填写已有地址。
 

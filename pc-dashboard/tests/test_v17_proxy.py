@@ -363,6 +363,17 @@ class PersistentReadCacheTests(TestCase):
         ):
             self.assertEqual(sync_server._read_v17_resource("/v1/wishes"), expected)
 
+    def test_time_intervals_are_accepted_as_a_central_read_resource(self):
+        expected = {
+            "intervals": [{
+                "interval_id": "interval-1", "name": "会议时间",
+                "start_local_time": "19:30", "end_local_time": "21:00", "color": "#2563EB",
+            }],
+            "state": {"current": None},
+        }
+        with patch.object(sync_server, "_central_read_json", return_value=expected):
+            self.assertEqual(sync_server._read_v17_resource("/v1/time-intervals"), expected)
+
     def test_query_variants_do_not_share_the_same_cache_entry(self):
         current = {"wishes": [{"wish_id": "current"}]}
         archived = {"wishes": [{"wish_id": "archived"}]}

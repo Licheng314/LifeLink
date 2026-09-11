@@ -13,7 +13,7 @@ from typing import Sequence
 
 from central.config import CentralConfig, default_config_path
 from central.http import MissingDeviceTokenError, create_server
-from central.management import MANAGEMENT_PORT, create_management_server, management_bind_host
+from central.management import MANAGEMENT_PORT, create_management_server, management_bind_host, management_local_url
 from central.operations import initialize_device
 from central.storage import readonly_diagnostics
 
@@ -133,7 +133,7 @@ def run_server(args: argparse.Namespace) -> int:
     if management is None:
         print(f"  Manage   : unavailable ({management_host}:{MANAGEMENT_PORT} is occupied)")
     else:
-        print(f"  Manage   : http://{management_host}:{MANAGEMENT_PORT}")
+        print(f"  Manage   : {management_local_url(MANAGEMENT_PORT)}")
     print("  P2P/AW/TS: disabled")
     print("=" * 54)
     try:

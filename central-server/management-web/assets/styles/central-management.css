@@ -1,5 +1,5 @@
-/* The additional central page follows the copied dashboard's card vocabulary. */
-#page-central-management { max-width: 1080px; }
+/* Fill the existing main-content width so management cards do not stop short on wide screens. */
+#page-central-management { max-width: none; }
 #page-central-management > #sync-device-cards {
   display: flex;
   flex-wrap: nowrap;

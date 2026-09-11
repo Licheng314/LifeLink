@@ -36,6 +36,7 @@ if sys.platform == "win32":
 BASE_DIR = resource_dir()
 SERVER_SCRIPT = BASE_DIR / "sync_server.py"
 TRAY_ICON_FILE = BASE_DIR / "assets" / "life-link-client-tray.ico"
+LIFE_LINK_LOGO_FILE = BASE_DIR / "assets" / "life-link-logo-108.png"
 CLIENT_DATA_DIR = default_client_data_dir() / "data"
 SETTINGS_FILE = CLIENT_DATA_DIR / "desktop_app_settings.json"
 LOG_DIR = CLIENT_DATA_DIR / "logs"
@@ -77,6 +78,7 @@ HEALTH_URL = f"{DASHBOARD_URL}v1/health"
 CUSTOM_EVENT_URL = f"{DASHBOARD_URL}api/custom-events"
 TIMELINE_EVENTS_URL = f"{DASHBOARD_URL}api/timeline-events"
 SETTINGS_URL = f"{DASHBOARD_URL}api/settings"
+TIME_INTERVALS_URL = f"{DASHBOARD_URL}api/time-intervals"
 REFRESH_MILLISECONDS = 2_000
 TIMELINE_REFRESH_MILLISECONDS = 30_000
 DAY_START_REFRESH_SECONDS = 30.0
@@ -116,6 +118,12 @@ def visible_timeline_events(
             visible.append(event)
     return visible
 WINDOW_ALPHA = 0.90
+COLLAPSED_IDLE_ALPHA = 0.30
+ALPHA_FADE_STEP = 0.06
+ALPHA_FADE_INTERVAL_MILLISECONDS = 20
+COLLAPSED_HOVER_POLL_MILLISECONDS = 100
+TRANSPARENT_SUBSTRATE_COLOR = "#010203"
+SEDENTARY_CARD_TOP_GAP = 8
 SEDENTARY_LIMIT_SECONDS = 60 * 60
 AFK_TOLERANCE_SECONDS = 3 * 60
 AFK_RESET_SECONDS = 5 * 60
@@ -299,6 +307,60 @@ def format_compact_duration(seconds: object) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
+def format_clock_duration(seconds: object) -> str:
+    """Return a stable H:MM:SS countdown for the active time-interval card."""
+    try:
+        total = max(0, int(seconds or 0))
+    except (TypeError, ValueError):
+        total = 0
+    hours, remainder = divmod(total, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{seconds:02d}"
+
+
+def format_hour_minutes(seconds: object) -> str:
+    try:
+        total = max(0, int(seconds or 0))
+    except (TypeError, ValueError):
+        total = 0
+    hours, remainder = divmod(total, 3_600)
+    minutes = remainder // 60
+    if hours:
+        return f"{hours} 时 {minutes} 分"
+    return f"{minutes} 分"
+
+
+def local_clock_minutes(value: object) -> int | None:
+    """Return a local HH:MM value as minutes after midnight."""
+    try:
+        hour, minute = map(int, str(value).split(":"))
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        return None
+    return hour * 60 + minute
+
+
+def business_day_interval_segments(
+    start_local_time: object,
+    end_local_time: object,
+    day_start_hour: int,
+) -> list[tuple[int, int]]:
+    """Split an interval into one or two minute ranges on a 24-hour business-day axis."""
+    start = local_clock_minutes(start_local_time)
+    end = local_clock_minutes(end_local_time)
+    if start is None or end is None:
+        return []
+    boundary = (int(day_start_hour) % 24) * 60
+    start = (start - boundary) % 1440
+    end = (end - boundary) % 1440
+    if start == end:
+        return []
+    if start < end:
+        return [(start, end)]
+    return [(start, 1440), (0, end)]
+
+
 def sedentary_status_text(timer: SedentaryTimer, activity_state: str) -> str:
     if activity_state == "afk":
         return f"AFK 时间 {format_compact_duration(timer.afk_seconds)}"
@@ -331,6 +393,14 @@ class UsageStatusWindow:
         self.poll_job: str | None = None
         self.sedentary_job: str | None = None
         self.personal_time_job: str | None = None
+        self.time_interval_queue: queue.Queue[dict[str, object]] = queue.Queue()
+        self.time_interval_state: dict[str, object] = {}
+        self.time_intervals: list[dict[str, object]] = []
+        self.time_interval_state_received_at = 0.0
+        self.time_interval_last_fetch = 0.0
+        self.time_interval_fetch_in_progress = False
+        self.last_time_interval_id: str | None = None
+        self.time_interval_initialized = False
         self.initial_position_applied = False
         self.minimized = False
         self.drag_origin: tuple[int, int, int, int] | None = None
@@ -343,6 +413,11 @@ class UsageStatusWindow:
         self.afk_progress_ratio = 0.0
         self.collapsed = False
         self.expanded_size: tuple[int, int] | None = None
+        self.collapsed_size: tuple[int, int] | None = None
+        self.backdrop_alpha_target = WINDOW_ALPHA
+        self.backdrop_fade_job: str | None = None
+        self.collapsed_hover_job: str | None = None
+        self.transparent_substrate_widgets: dict[tk.Widget, str] = {}
 
         # 事件列表面板状态
         self.timeline_queue: queue.Queue[object] = queue.Queue()
@@ -367,84 +442,120 @@ class UsageStatusWindow:
         self.card_background = "#1e293b"
         self.card_border = "#334155"
         self.window.configure(background=self.background)
+        self.window.attributes("-transparentcolor", TRANSPARENT_SUBSTRATE_COLOR)
+        self.backdrop = tk.Toplevel(root)
+        self.backdrop.withdraw()
+        self.backdrop.overrideredirect(True)
+        self.backdrop.resizable(False, False)
+        self.backdrop.configure(background=self.background)
+        self.backdrop.attributes("-alpha", WINDOW_ALPHA)
+        self.backdrop.bind("<ButtonPress-1>", self._start_drag, add="+")
+        self.backdrop.bind("<B1-Motion>", self._drag_window, add="+")
+        self.backdrop.bind("<ButtonRelease-1>", self._stop_drag, add="+")
 
         shell = tk.Frame(self.window, background=self.background)
         shell.pack(fill="both", expand=True)
-        titlebar = tk.Frame(shell, background=self.background, height=30)
-        titlebar.pack(fill="x")
-        titlebar.pack_propagate(False)
+        self.titlebar = tk.Frame(shell, background=self.background, height=30)
+        self.titlebar.pack(fill="x")
+        self.titlebar.pack_propagate(False)
         tk.Label(
-            titlebar, text="Life Link · 用时状态", anchor="w",
+            self.titlebar, text="Life Link · 用时状态", anchor="w",
             background=self.background, foreground=self.normal_color,
             font=("Microsoft YaHei UI", 9, "bold"), padx=10,
         ).pack(side="left", fill="y")
-        close_button = self._title_button(titlebar, "×", self.hide)
+        close_button = self._title_button(self.titlebar, "×", self.hide)
         close_button.pack(side="right", fill="y")
-        minimize_button = self._title_button(titlebar, "—", self.minimize)
+        minimize_button = self._title_button(self.titlebar, "—", self.minimize)
         minimize_button.pack(side="right", fill="y")
         self.collapse_button = self._title_button(
-            titlebar, "▼", self.toggle_collapsed,
+            self.titlebar, "▲", self.toggle_collapsed,
         )
         self.collapse_button.pack(side="right", fill="y")
         # 顶部“置顶”勾选框：位于标题与折叠三角之间
         self.title_topmost_check = tk.Checkbutton(
-            titlebar, text="置顶", variable=self.topmost_value,
+            self.titlebar, text="置顶", variable=self.topmost_value,
             command=self.apply_topmost, background=self.background,
             foreground=self.normal_color, activebackground=self.background,
             activeforeground=self.normal_color, selectcolor=self.card_background,
             font=("Microsoft YaHei UI", 8), borderwidth=0, padx=4,
         )
         self.title_topmost_check.pack(side="left", fill="y")
+        self.titlebar_substrate_widgets = {
+            close_button,
+            minimize_button,
+            self.collapse_button,
+            self.title_topmost_check,
+        }
 
         self.outer = tk.Frame(shell, background=self.background, padx=10, pady=8)
         self.outer.pack(fill="both", expand=True)
         self.value_labels: dict[str, tk.Label] = {}
 
-        # 用量区精简为并排两卡：左卡=本机应用用时(今日)，右卡=当前应用。
+        # 顶部用量区：入口与两张信息卡等高，保持紧凑的单排布局。
+        usage_card_height = 54
         self.totals_row = tk.Frame(self.outer, background=self.background)
         self.totals_row.pack(fill="x")
-        self.totals_row.columnconfigure(0, weight=1, uniform="totals")
+        self.totals_row.rowconfigure(0, minsize=usage_card_height)
+        self.totals_row.columnconfigure(0, minsize=usage_card_height)
         self.totals_row.columnconfigure(1, weight=1, uniform="totals")
+        self.totals_row.columnconfigure(2, weight=1, uniform="totals")
+        self.dashboard_icon = tk.PhotoImage(
+            file=str(LIFE_LINK_LOGO_FILE),
+            master=self.window,
+        ).subsample(2, 2)
+        self.dashboard_button = tk.Canvas(
+            self.totals_row, width=usage_card_height, height=usage_card_height,
+            background=self.background,
+            highlightthickness=0, borderwidth=0, cursor="hand2",
+        )
+        self.dashboard_button.create_image(
+            usage_card_height // 2, usage_card_height // 2,
+            image=self.dashboard_icon,
+        )
+        self.dashboard_button.bind("<Button-1>", lambda _event: self.open_dashboard())
+        self.dashboard_button.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
 
         app_card = tk.Frame(
             self.totals_row, background=self.card_background,
             highlightbackground=self.card_border, highlightthickness=1,
-            padx=9, pady=6,
+            height=usage_card_height, padx=7, pady=0,
         )
-        app_card.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        app_card.grid_propagate(False)
+        app_card.rowconfigure(0, weight=1, uniform="usage-card-space")
+        app_card.rowconfigure(3, weight=1, uniform="usage-card-space")
+        app_card.columnconfigure(0, weight=1)
+        app_card.grid(row=0, column=1, sticky="nsew", padx=(0, 2))
         tk.Label(
-            app_card, text="本机应用用时", anchor="w", background=self.card_background,
+            app_card, text="本机用时", anchor="w", background=self.card_background,
             foreground=self.accent_color, font=("Microsoft YaHei UI", 9, "bold"),
-        ).pack(fill="x", pady=(0, 3))
-        today_row = tk.Frame(app_card, background=self.card_background)
-        today_row.pack(fill="x", pady=1)
-        tk.Label(
-            today_row, text="今日", anchor="w", background=self.card_background,
-            foreground=self.muted_color, font=("Microsoft YaHei UI", 8),
-        ).pack(side="left")
+        ).grid(row=1, column=0, sticky="ew")
         today_value = tk.Label(
-            today_row, text="00分00秒", anchor="e", background=self.card_background,
+            app_card, text="0 分", anchor="w", background=self.card_background,
             foreground=self.normal_color, font=("Microsoft YaHei UI", 9, "bold"),
         )
-        today_value.pack(side="right")
+        today_value.grid(row=2, column=0, sticky="ew")
         self.value_labels["today_app"] = today_value
 
         current_card = tk.Frame(
             self.totals_row, background=self.card_background,
             highlightbackground=self.card_border, highlightthickness=1,
-            padx=9, pady=6,
+            height=usage_card_height, padx=7, pady=0,
         )
-        current_card.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        current_card.grid_propagate(False)
+        current_card.rowconfigure(0, weight=1, uniform="usage-card-space")
+        current_card.rowconfigure(3, weight=1, uniform="usage-card-space")
+        current_card.columnconfigure(0, weight=1)
+        current_card.grid(row=0, column=2, sticky="nsew", padx=(2, 0))
         tk.Label(
             current_card, text="当前应用", anchor="w", background=self.card_background,
             foreground=self.muted_color, font=("Microsoft YaHei UI", 8),
-        ).pack(fill="x", pady=(0, 3))
+        ).grid(row=1, column=0, sticky="ew")
         current_app_value = tk.Label(
             current_card, text="加载中…", anchor="w", background=self.card_background,
             foreground=self.normal_color, font=("Microsoft YaHei UI", 10, "bold"),
-            wraplength=130, justify="left",
+            wraplength=112, justify="left",
         )
-        current_app_value.pack(fill="x")
+        current_app_value.grid(row=2, column=0, sticky="ew")
         self.value_labels["current_app"] = current_app_value
 
         self.sedentary_card = tk.Frame(
@@ -452,7 +563,7 @@ class UsageStatusWindow:
             highlightbackground=self.card_border, highlightthickness=1,
             padx=9, pady=7,
         )
-        self.sedentary_card.pack(fill="x", pady=(5, 0))
+        self.sedentary_card.pack(fill="x", pady=(SEDENTARY_CARD_TOP_GAP, 0))
         timer_row = tk.Frame(self.sedentary_card, background=self.card_background)
         timer_row.pack(fill="x")
         tk.Label(
@@ -500,25 +611,11 @@ class UsageStatusWindow:
         self.progress_row.pack(fill="x", pady=(7, 0))
         self.progress_row.columnconfigure(0, weight=1)
         self.online_canvas = tk.Canvas(
-            self.progress_row, width=1, height=10, background=self.card_border,
-            highlightthickness=0, borderwidth=0,
-        )
-        self.online_canvas.grid(row=0, column=0, sticky="ew")
-        self.afk_canvas = tk.Canvas(
             self.progress_row, width=1, height=6, background=self.card_border,
             highlightthickness=0, borderwidth=0,
         )
-        self.afk_canvas.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        self.online_canvas.grid(row=0, column=0, sticky="ew")
         self.online_canvas.bind("<Configure>", lambda _event: self.redraw_progress())
-        self.afk_canvas.bind("<Configure>", lambda _event: self.redraw_progress())
-        self.dashboard_button = tk.Button(
-            self.sedentary_card, text="打开 Dashboard", command=self.open_dashboard,
-            background=self.card_border, foreground=self.normal_color,
-            activebackground="#475569", activeforeground=self.normal_color,
-            relief="flat", borderwidth=0, padx=6, pady=3,
-            font=("Microsoft YaHei UI", 9),
-        )
-        self.dashboard_button.pack(fill="x", pady=(7, 0))
 
         # ---- 个人时光倒计时 ----
         self.personal_time_card = tk.Frame(
@@ -526,25 +623,26 @@ class UsageStatusWindow:
             highlightbackground=self.card_border, highlightthickness=1,
             padx=9, pady=7,
         )
-        self.personal_time_card.pack(fill="x", pady=(5, 0))
         personal_row = tk.Frame(self.personal_time_card, background=self.card_background)
         personal_row.pack(fill="x")
-        tk.Label(
-            personal_row, text="个人时光", anchor="w", background=self.card_background,
-            foreground=self.personal_time_purple, font=("Microsoft YaHei UI", 9, "bold"),
-        ).pack(side="left")
         self.personal_time_label = tk.Label(
-            personal_row, text="剩余 --:--:--", anchor="w",
+            personal_row, text="时间区间 剩余 0:00:00", anchor="w",
             background=self.card_background, foreground=self.normal_color,
             font=("Microsoft YaHei UI", 9, "bold"),
         )
-        self.personal_time_label.pack(side="left", padx=(7, 0))
+        self.personal_time_label.pack(side="left", fill="x")
         self.personal_progress_canvas = tk.Canvas(
-            self.personal_time_card, width=1, height=8, background=self.card_border,
+            self.personal_time_card, width=1, height=6, background=self.card_border,
             highlightthickness=0, borderwidth=0,
         )
         self.personal_progress_canvas.pack(fill="x", pady=(7, 0))
         self.personal_progress_canvas.bind("<Configure>", lambda _event: self.redraw_personal_time())
+        self.personal_timeline_canvas = tk.Canvas(
+            self.personal_time_card, width=1, height=18, background=self.card_background,
+            highlightthickness=0, borderwidth=0,
+        )
+        self.personal_timeline_canvas.pack(fill="x", pady=(6, 0))
+        self.personal_timeline_canvas.bind("<Configure>", lambda _event: self.redraw_personal_time())
 
         # ---- 事件列表面板（Canvas 滚动，每个事件独立带边框卡片）----
         self.events_card = tk.Frame(
@@ -645,12 +743,13 @@ class UsageStatusWindow:
         x = window_x + event.x_root - start_x
         y = window_y + event.y_root - start_y
         self.window.geometry(f"+{x}+{y}")
+        if self.backdrop.winfo_viewable():
+            self.backdrop.geometry(f"+{x}+{y}")
 
     def _stop_drag(self, _event: tk.Event) -> None:
         self.drag_origin = None
 
     def toggle_collapsed(self) -> None:
-        self.window.update_idletasks()
         x = self.window.winfo_x()
         y = self.window.winfo_y()
         if not self.collapsed:
@@ -662,28 +761,153 @@ class UsageStatusWindow:
             self.personal_time_card.pack_forget()
             self.events_card.pack_forget()
             self.controls.pack_forget()
+            # In compact mode, the container owns equal top/bottom breathing room.
+            self.outer.configure(pady=SEDENTARY_CARD_TOP_GAP)
+            self.sedentary_card.pack_configure(pady=0)
             self.collapsed = True
-            self.collapse_button.configure(text="▲")
-            self.window.update_idletasks()
-            width = max(MINIMUM_WIDTH, self.window.winfo_width())
-            height = self.window.winfo_reqheight()
+            self.collapse_button.configure(text="▼")
+            if self.collapsed_size is None:
+                # The compact state hugs the remaining card but never grows beyond the expanded width.
+                width = min(
+                    self.expanded_size[0],
+                    max(280, self.sedentary_card.winfo_reqwidth() + 20),
+                )
+                sedentary_height = max(
+                    self.sedentary_card.winfo_reqheight(),
+                    self.sedentary_card.winfo_height(),
+                )
+                height = (
+                    self.titlebar.winfo_reqheight()
+                    + sedentary_height
+                    + SEDENTARY_CARD_TOP_GAP * 2
+                )
+                self.collapsed_size = (width, height)
+            width, height = self.collapsed_size
             self.window.geometry(f"{width}x{height}+{x}+{y}")
+            self._start_collapsed_hover_monitor()
         else:
-            self.sedentary_card.pack_forget()
-            self.personal_time_card.pack_forget()
-            self.totals_row.pack(fill="x")
-            self.sedentary_card.pack(fill="x", pady=(5, 0))
-            # 个人时光卡片在时间范围内重新显示
-            self.personal_time_card.pack(fill="x", pady=(5, 0))
+            self._stop_collapsed_hover_monitor()
+            self._hide_background_layer()
+            self.outer.configure(pady=8)
+            self.sedentary_card.pack_configure(pady=(SEDENTARY_CARD_TOP_GAP, 0))
+            self.totals_row.pack(fill="x", before=self.sedentary_card)
+            current = self.time_interval_state.get("current") if isinstance(self.time_interval_state, dict) else None
+            if self.time_intervals:
+                self.personal_time_card.pack(fill="x", pady=(5, 0))
             self.events_card.pack(fill="x", pady=(5, 0))
             self.controls.pack(fill="x", pady=(4, 0))
             self.collapsed = False
-            self.collapse_button.configure(text="▼")
+            self.collapse_button.configure(text="▲")
             if self.expanded_size:
                 width, height = self.expanded_size
                 self.window.geometry(f"{width}x{height}+{x}+{y}")
-        self.window.update_idletasks()
-        self.redraw_progress()
+        self.root.after_idle(self.redraw_progress)
+
+    def _pointer_is_over_window(self) -> bool:
+        pointer_x, pointer_y = self.window.winfo_pointerxy()
+        return (
+            self.window.winfo_rootx() <= pointer_x < self.window.winfo_rootx() + self.window.winfo_width()
+            and self.window.winfo_rooty() <= pointer_y < self.window.winfo_rooty() + self.window.winfo_height()
+        )
+
+    def _start_collapsed_hover_monitor(self) -> None:
+        if self.collapsed_hover_job is None:
+            self._update_collapsed_hover_alpha()
+
+    def _stop_collapsed_hover_monitor(self) -> None:
+        if self.collapsed_hover_job is not None:
+            try:
+                self.root.after_cancel(self.collapsed_hover_job)
+            except tk.TclError:
+                pass
+            self.collapsed_hover_job = None
+
+    def _update_collapsed_hover_alpha(self) -> None:
+        self.collapsed_hover_job = None
+        if not self.collapsed or not self.window.winfo_viewable():
+            return
+        if self._pointer_is_over_window():
+            self._fade_backdrop_to(WINDOW_ALPHA)
+        else:
+            self._show_background_layer()
+            self._fade_backdrop_to(COLLAPSED_IDLE_ALPHA)
+        self.collapsed_hover_job = self.root.after(
+            COLLAPSED_HOVER_POLL_MILLISECONDS,
+            self._update_collapsed_hover_alpha,
+        )
+
+    def _iter_substrate_widgets(self, widget: tk.Widget):
+        # The compact card is an information surface, not the window substrate.
+        # Keeping this subtree opaque prevents its gray fill from popping in/out.
+        if widget is self.sedentary_card:
+            return
+        if (
+            isinstance(widget, (tk.Toplevel, tk.Frame, tk.Label))
+            or widget in self.titlebar_substrate_widgets
+        ):
+            yield widget
+        for child in widget.winfo_children():
+            yield from self._iter_substrate_widgets(child)
+
+    def _show_background_layer(self) -> None:
+        if not self.backdrop.winfo_viewable():
+            self.backdrop.geometry(
+                f"{self.window.winfo_width()}x{self.window.winfo_height()}"
+                f"+{self.window.winfo_x()}+{self.window.winfo_y()}"
+            )
+            self.backdrop.attributes("-alpha", WINDOW_ALPHA)
+            self.backdrop.deiconify()
+            self.backdrop.lower(self.window)
+        if not self.transparent_substrate_widgets:
+            for widget in self._iter_substrate_widgets(self.window):
+                try:
+                    color = str(widget.cget("background"))
+                except tk.TclError:
+                    continue
+                if color in {self.background, self.card_background}:
+                    self.transparent_substrate_widgets[widget] = color
+                    widget.configure(background=TRANSPARENT_SUBSTRATE_COLOR)
+
+    def _hide_background_layer(self) -> None:
+        for widget, color in tuple(self.transparent_substrate_widgets.items()):
+            try:
+                if widget.winfo_exists():
+                    widget.configure(background=color)
+            except tk.TclError:
+                pass
+        self.transparent_substrate_widgets.clear()
+        self.backdrop.withdraw()
+        self.backdrop.attributes("-alpha", WINDOW_ALPHA)
+
+    def _fade_backdrop_to(self, target: float) -> None:
+        if target >= WINDOW_ALPHA and not self.backdrop.winfo_viewable():
+            return
+        self.backdrop_alpha_target = target
+        if self.backdrop_fade_job is None:
+            self._step_backdrop_alpha()
+
+    def _step_backdrop_alpha(self) -> None:
+        self.backdrop_fade_job = None
+        try:
+            current = float(self.backdrop.attributes("-alpha"))
+        except tk.TclError:
+            return
+        delta = self.backdrop_alpha_target - current
+        if abs(delta) <= ALPHA_FADE_STEP:
+            self.backdrop.attributes("-alpha", self.backdrop_alpha_target)
+            if self.backdrop_alpha_target >= WINDOW_ALPHA and (
+                not self.collapsed or self._pointer_is_over_window()
+            ):
+                self._hide_background_layer()
+            return
+        self.backdrop.attributes(
+            "-alpha",
+            current + ALPHA_FADE_STEP * (1 if delta > 0 else -1),
+        )
+        self.backdrop_fade_job = self.root.after(
+            ALPHA_FADE_INTERVAL_MILLISECONDS,
+            self._step_backdrop_alpha,
+        )
 
     def active_leave(self) -> None:
         self.sedentary_timer.acknowledge()
@@ -868,6 +1092,25 @@ class UsageStatusWindow:
                 self._render_timeline(newest_timeline)
             except Exception:
                 logging.exception("事件时间线渲染失败")
+        latest_interval: dict[str, object] | None = None
+        try:
+            while True:
+                latest_interval = self.time_interval_queue.get_nowait()
+        except queue.Empty:
+            pass
+        if latest_interval is not None:
+            self.time_interval_fetch_in_progress = False
+            state = latest_interval.get("state")
+            self.time_interval_state = state if isinstance(state, dict) else {}
+            self.time_intervals = [
+                item for item in latest_interval.get("intervals", [])
+                if isinstance(item, dict)
+            ]
+            self.time_interval_state_received_at = time.monotonic()
+            if not self.time_interval_initialized:
+                current = self.time_interval_state.get("current")
+                self.last_time_interval_id = str(current.get("interval_id")) if isinstance(current, dict) else None
+                self.time_interval_initialized = True
         self.poll_job = self.root.after(100, self.poll_results)
 
     def _render_timeline(self, events: list[dict[str, object]]) -> None:
@@ -1032,10 +1275,16 @@ class UsageStatusWindow:
             self.minimized = False
         self.window.deiconify()
         self.window.lift()
+        if self.collapsed:
+            self._start_collapsed_hover_monitor()
+        else:
+            self._hide_background_layer()
         self.root.after_idle(self._reapply_topmost)
 
     def hide(self) -> None:
         self.minimized = False
+        self._stop_collapsed_hover_monitor()
+        self._hide_background_layer()
         self.window.withdraw()
         self.window.overrideredirect(True)
 
@@ -1043,6 +1292,7 @@ class UsageStatusWindow:
         if not self.window.winfo_viewable():
             return
         self.minimized = True
+        self._hide_background_layer()
         self.window.overrideredirect(False)
         self.window.update_idletasks()
         self._ensure_taskbar_style()
@@ -1092,6 +1342,8 @@ class UsageStatusWindow:
             self.window.overrideredirect(True)
             self.window.lift()
             self._reapply_topmost()
+            if self.collapsed:
+                self._start_collapsed_hover_monitor()
 
     def apply_topmost(self) -> None:
         self.settings["topmost"] = bool(self.topmost_value.get())
@@ -1100,7 +1352,11 @@ class UsageStatusWindow:
 
     def _reapply_topmost(self) -> None:
         if self.window.winfo_exists():
-            self.window.attributes("-topmost", bool(self.topmost_value.get()))
+            topmost = bool(self.topmost_value.get())
+            self.backdrop.attributes("-topmost", topmost)
+            self.window.attributes("-topmost", topmost)
+            if self.backdrop.winfo_viewable():
+                self.backdrop.lower(self.window)
 
     def refresh_now(self) -> None:
         if not self.fetch_in_progress:
@@ -1145,7 +1401,7 @@ class UsageStatusWindow:
             foreground=self.warning_color if warning_reason == "process" else self.normal_color,
         )
         self.value_labels["today_app"].configure(
-            text=format_duration(data.get("today_app_seconds")),
+            text=format_hour_minutes(data.get("today_app_seconds")),
             foreground=self.accent_color,
         )
 
@@ -1177,50 +1433,119 @@ class UsageStatusWindow:
             self.update_sedentary_timer,
         )
 
-    PERSONAL_TIME_START_HOUR = 20
-    PERSONAL_TIME_END_HOUR = 23
+    def _fetch_time_interval_state(self) -> None:
+        try:
+            with self.opener.open(TIME_INTERVALS_URL, timeout=10) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            state = payload.get("state") if isinstance(payload, dict) else None
+            intervals = payload.get("intervals") if isinstance(payload, dict) else None
+            if not isinstance(state, dict) or not isinstance(intervals, list):
+                raise ValueError("时间区间响应格式错误")
+            self.time_interval_queue.put({
+                "state": state,
+                "intervals": [item for item in intervals if isinstance(item, dict)],
+            })
+        except Exception as error:
+            logging.warning("时间区间读取失败: %s", error)
+            self.time_interval_queue.put({"state": {}, "intervals": []})
 
-    def _personal_time_window(self) -> tuple[datetime, datetime, float] | None:
-        """Return (start, end, total_seconds) for tonight's 20:00-23:00 in Shanghai TZ."""
-        now = datetime.now(SHANGHAI_TZ)
-        start = now.replace(hour=self.PERSONAL_TIME_START_HOUR, minute=0, second=0, microsecond=0)
-        end = now.replace(hour=self.PERSONAL_TIME_END_HOUR, minute=0, second=0, microsecond=0)
-        if now < start:
-            return None  # 还没到晚上8点
-        if now >= end:
-            return None  # 已过晚上11点
-        return start, end, (end - start).total_seconds()
+    def _refresh_time_interval_state(self) -> None:
+        if self.time_interval_fetch_in_progress or time.monotonic() - self.time_interval_last_fetch < 30:
+            return
+        self.time_interval_last_fetch = time.monotonic()
+        self.time_interval_fetch_in_progress = True
+        threading.Thread(target=self._fetch_time_interval_state, daemon=True, name="life-link-time-interval").start()
 
     def update_personal_time(self) -> None:
-        window = self._personal_time_window()
-        if window is None:
+        """Display only central-authoritative foreground intervals; never retain a PC schedule copy."""
+        self._refresh_time_interval_state()
+        state = self.time_interval_state
+        current = state.get("current") if isinstance(state, dict) else None
+        current_id = str(current.get("interval_id")) if isinstance(current, dict) else None
+        if self.time_interval_initialized and self.last_time_interval_id and self.last_time_interval_id != current_id:
+            self.notify_break("时间区间结束", "当前时间区间已结束。")
+            self.last_time_interval_id = None
+        if self.time_interval_initialized and isinstance(current, dict) and self.last_time_interval_id != current_id:
+            self.notify_break("时间区间开始", f"已进入 {current.get('name', '时间区间')}。")
+            self.last_time_interval_id = current_id
+        if self.collapsed or not self.time_intervals:
             self.personal_time_card.pack_forget()
         else:
-            start, end, total_seconds = window
-            remaining = max(0, (end - datetime.now(SHANGHAI_TZ)).total_seconds())
-            self.personal_time_remaining = remaining / total_seconds if total_seconds > 0 else 0
             if not self.personal_time_card.winfo_ismapped():
-                self.personal_time_card.pack(
-                    fill="x", pady=(5, 0),
-                    before=self.events_card if self.events_card.winfo_ismapped() else None,
+                self.personal_time_card.pack(fill="x", pady=(5, 0), before=self.events_card if self.events_card.winfo_ismapped() else None)
+            if isinstance(current, dict):
+                received_elapsed = max(0, int(time.monotonic() - self.time_interval_state_received_at))
+                remaining = max(0, int(state.get("current_remaining_seconds") or 0) - received_elapsed)
+                self.personal_time_remaining = remaining / max(1, self._interval_duration_seconds(current))
+                self.personal_time_color = str(current.get("color") or self.personal_time_purple)
+                self.personal_time_label.configure(
+                    text=f"{current.get('name', '时间区间')} 剩余 {format_clock_duration(remaining)}",
+                    foreground=self.personal_time_color,
                 )
-            self.personal_time_label.configure(
-                text=f"剩余 {format_duration(int(remaining))}",
-            )
+            else:
+                self.personal_time_remaining = 0
+                self.personal_time_label.configure(
+                    text="时间区间总览",
+                    foreground=self.muted_color,
+                )
             self.redraw_personal_time()
         self.personal_time_job = self.root.after(1_000, self.update_personal_time)
 
+    @staticmethod
+    def _interval_duration_seconds(interval: dict[str, object]) -> int:
+        try:
+            start_hour, start_minute = map(int, str(interval["start_local_time"]).split(":"))
+            end_hour, end_minute = map(int, str(interval["end_local_time"]).split(":"))
+            return ((end_hour * 60 + end_minute - start_hour * 60 - start_minute) % 1440) * 60
+        except Exception:
+            return 1
+
     def redraw_personal_time(self) -> None:
-        ratio = getattr(self, 'personal_time_remaining', 0)
-        canvas = self.personal_progress_canvas
-        width = max(1, canvas.winfo_width())
-        canvas.delete("all")
-        fill_width = int(width * ratio)
+        """Draw both the remaining-time progress bar and its business-day timeline."""
+        progress = self.personal_progress_canvas
+        progress_width = max(1, progress.winfo_width())
+        progress.delete("all")
+        remaining_ratio = getattr(self, "personal_time_remaining", 0)
+        fill_width = int(progress_width * max(0, min(1, remaining_ratio)))
         if fill_width > 0:
-            canvas.create_rectangle(
-                0, 0, fill_width, canvas.winfo_height(),
-                fill=self.personal_time_purple, outline="",
+            progress.create_rectangle(
+                0, 0, fill_width, progress.winfo_height(),
+                fill=getattr(self, "personal_time_color", self.personal_time_purple), outline="",
             )
+
+        canvas = self.personal_timeline_canvas
+        width = max(1, canvas.winfo_width())
+        height = max(1, canvas.winfo_height())
+        canvas.delete("all")
+        center_y = height // 2
+        canvas.create_line(0, center_y, width, center_y, fill=self.card_border, width=1)
+        day_start_hour = getattr(self, "day_start_hour", 0)
+        for interval in getattr(self, "time_intervals", []):
+            if not isinstance(interval, dict):
+                continue
+            color = str(interval.get("color") or self.personal_time_purple)
+            for start, end in business_day_interval_segments(
+                interval.get("start_local_time"),
+                interval.get("end_local_time"),
+                day_start_hour,
+            ):
+                canvas.create_rectangle(
+                    width * start / 1440,
+                    center_y - 1,
+                    width * end / 1440,
+                    center_y + 1,
+                    fill=color,
+                    outline="",
+                )
+        now = datetime.now(SHANGHAI_TZ)
+        now_minutes = (
+            now.hour * 60 + now.minute + now.second / 60 - day_start_hour * 60
+        ) % 1440
+        now_x = width * now_minutes / 1440
+        canvas.create_line(
+            now_x, max(1, center_y - 3), now_x, min(height - 1, center_y + 3),
+            fill="#ef4444", width=2,
+        )
 
     def render_sedentary_timer(self) -> None:
         timer = self.sedentary_timer
@@ -1234,8 +1559,8 @@ class UsageStatusWindow:
                 else self.normal_color
             ),
         )
-        self.online_progress_ratio = timer.online_progress
-        self.afk_progress_ratio = timer.afk_progress
+        self.online_progress_ratio = timer.afk_progress if self.current_activity_state == "afk" else timer.online_progress
+        self.online_progress_color = self.afk_green if self.current_activity_state == "afk" else self.sedentary_orange
         self.sedentary_card.configure(
             highlightbackground=self.sedentary_orange if timer.reminder_active else self.card_border,
         )
@@ -1249,24 +1574,28 @@ class UsageStatusWindow:
         self.redraw_progress()
 
     def redraw_progress(self) -> None:
-        for canvas, ratio, color in (
-            (self.online_canvas, self.online_progress_ratio, self.sedentary_orange),
-            (self.afk_canvas, self.afk_progress_ratio, self.afk_green),
-        ):
-            width = max(1, canvas.winfo_width())
-            height = max(1, canvas.winfo_height())
-            canvas.delete("progress")
-            if ratio > 0:
-                canvas.create_rectangle(
-                    0, 0, int(width * min(1.0, ratio)), height,
-                    fill=color, outline="", tags="progress",
-                )
+        canvas = self.online_canvas
+        width = max(1, canvas.winfo_width())
+        height = max(1, canvas.winfo_height())
+        canvas.delete("progress")
+        if self.online_progress_ratio > 0:
+            canvas.create_rectangle(
+                0, 0, int(width * min(1.0, self.online_progress_ratio)), height,
+                fill=getattr(self, "online_progress_color", self.sedentary_orange), outline="", tags="progress",
+            )
 
     def acknowledge_reminder(self) -> None:
         self.sedentary_timer.acknowledge()
         self.render_sedentary_timer()
 
     def destroy(self) -> None:
+        self._stop_collapsed_hover_monitor()
+        if self.backdrop_fade_job is not None:
+            try:
+                self.root.after_cancel(self.backdrop_fade_job)
+            except tk.TclError:
+                pass
+            self.backdrop_fade_job = None
         if self.refresh_job is not None:
             try:
                 self.root.after_cancel(self.refresh_job)
@@ -1284,6 +1613,8 @@ class UsageStatusWindow:
                 pass
         if self.window.winfo_exists():
             self.window.destroy()
+        if self.backdrop.winfo_exists():
+            self.backdrop.destroy()
 
 
 if sys.platform == "win32":

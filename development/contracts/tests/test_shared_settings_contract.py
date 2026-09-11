@@ -36,7 +36,7 @@ class SharedSettingsContractTests(unittest.TestCase):
         self.assertNotIn("'403':", endpoint)
 
     def test_contract_version_records_the_backward_compatible_addition(self):
-        self.assertIn("version: 1.15.5", self.openapi)
+        self.assertIn("version: 1.16.0", self.openapi)
 
     def test_public_response_and_patch_schema_are_closed_and_typed(self):
         response = yaml_block(self.openapi, "SharedSettings:", 4)

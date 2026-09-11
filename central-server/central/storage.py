@@ -139,6 +139,25 @@ CREATE TABLE IF NOT EXISTS shared_settings (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS daily_time_intervals (
+    interval_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    start_local_time TEXT NOT NULL,
+    end_local_time TEXT NOT NULL,
+    color TEXT NOT NULL,
+    tag TEXT,
+    foreground_display INTEGER NOT NULL DEFAULT 1 CHECK (foreground_display IN (0, 1)),
+    compatibility_source TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (length(name) BETWEEN 1 AND 50),
+    CHECK (start_local_time GLOB '[0-2][0-9]:[0-5][0-9]'),
+    CHECK (end_local_time GLOB '[0-2][0-9]:[0-5][0-9]')
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_time_intervals_start
+    ON daily_time_intervals(start_local_time);
+
 CREATE TABLE IF NOT EXISTS blacklist_rules (
     rule_id TEXT PRIMARY KEY,
     rule_type TEXT NOT NULL,
@@ -345,6 +364,7 @@ class CentralStore:
             self._migrate_blacklist_platform_scope(connection)
             self._seed_blacklist_rules(connection, table_already_existed=table_existed)
             self._seed_shared_settings(connection)
+            self._migrate_time_interval_compatibility(connection)
 
     @staticmethod
     def _migrate_device_management(connection: sqlite3.Connection) -> None:
@@ -389,6 +409,30 @@ class CentralStore:
             """,
             (utc_timestamp(),),
         )
+
+    @staticmethod
+    def _migrate_time_interval_compatibility(connection: sqlite3.Connection) -> None:
+        """Seed the two former schedule sources once without changing either source data."""
+        sleep = connection.execute(
+            "SELECT sleep_local_time FROM shared_settings WHERE singleton_id=1"
+        ).fetchone()
+        now = utc_timestamp()
+        legacy = (
+            ("sleep", "睡眠时间", str(sleep["sleep_local_time"]), str(sleep["sleep_local_time"]), "#7C3AED", "alert", 0),
+            ("personal_time", "个人时光", "20:00", "23:00", "#7C3AED", None, 1),
+        )
+        for source, name, start, end, color, tag, foreground in legacy:
+            exists = connection.execute(
+                "SELECT 1 FROM daily_time_intervals WHERE compatibility_source=?", (source,)
+            ).fetchone()
+            if exists is None:
+                connection.execute(
+                    """INSERT INTO daily_time_intervals(
+                        interval_id, name, start_local_time, end_local_time, color, tag,
+                        foreground_display, compatibility_source, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (str(uuid.uuid4()), name, start, end, color, tag, foreground, source, now, now),
+                )
 
     @staticmethod
     def _migrate_blacklist_platform_scope(connection: sqlite3.Connection) -> None:
@@ -681,6 +725,13 @@ class CentralStore:
                         """,
                         (*next_values, utc_timestamp()),
                     )
+                    if "sleep_local_time" in changes:
+                        connection.execute(
+                            """UPDATE daily_time_intervals
+                               SET start_local_time=?, end_local_time=?, updated_at=?
+                               WHERE compatibility_source='sleep'""",
+                            (changes["sleep_local_time"], changes["sleep_local_time"], utc_timestamp()),
+                        )
                     row = connection.execute(
                         """
                         SELECT *
@@ -724,6 +775,193 @@ class CentralStore:
 
     def update_shared_day_start_hour(self, day_start_hour: int) -> dict[str, Any]:
         return self.update_shared_settings({"day_start_hour": day_start_hour})
+
+    # ---------------------------------------------------------------
+    # Daily repeating time intervals
+    # ---------------------------------------------------------------
+
+    _TIME_INTERVAL_COLORS = {"#2563EB", "#7C3AED", "#DB2777", "#EA580C", "#16A34A", "#0891B2"}
+    _TIME_INTERVAL_TAGS = {"alert"}
+
+    @staticmethod
+    def _clock_minutes(value: str) -> int:
+        if not isinstance(value, str) or re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", value) is None:
+            raise ValueError("local time must be HH:mm")
+        hour, minute = value.split(":")
+        return int(hour) * 60 + int(minute)
+
+    @classmethod
+    def _validate_time_interval(cls, value: Mapping[str, Any], *, partial: bool = False) -> dict[str, Any]:
+        allowed = {"name", "start_local_time", "end_local_time", "color", "tag", "foreground_display"}
+        if not isinstance(value, Mapping) or not value or not set(value) <= allowed:
+            raise ValueError("unsupported time interval fields")
+        required = {"name", "start_local_time", "end_local_time", "color", "tag", "foreground_display"}
+        if not partial and set(value) != required:
+            raise ValueError("time interval must include all fields")
+        result = dict(value)
+        if "name" in result:
+            if not isinstance(result["name"], str) or not (1 <= len(result["name"].strip()) <= 50):
+                raise ValueError("time interval name must contain 1 to 50 characters")
+            result["name"] = result["name"].strip()
+        for key in ("start_local_time", "end_local_time"):
+            if key in result:
+                cls._clock_minutes(result[key])
+        if "color" in result and result["color"] not in cls._TIME_INTERVAL_COLORS:
+            raise ValueError("time interval color is not in the approved palette")
+        if "tag" in result and result["tag"] is not None and result["tag"] not in cls._TIME_INTERVAL_TAGS:
+            raise ValueError("unsupported time interval tag")
+        if "foreground_display" in result and not isinstance(result["foreground_display"], bool):
+            raise ValueError("foreground_display must be boolean")
+        return result
+
+    @classmethod
+    def _time_interval_from_row(cls, row: sqlite3.Row) -> dict[str, Any]:
+        start = str(row["start_local_time"])
+        end = str(row["end_local_time"])
+        return {
+            "interval_id": str(row["interval_id"]),
+            "name": str(row["name"]),
+            "start_local_time": start,
+            "end_local_time": end,
+            "is_time_anchor": start == end,
+            "color": str(row["color"]),
+            "tag": str(row["tag"]) if row["tag"] is not None else None,
+            "foreground_display": bool(row["foreground_display"]),
+            "compatibility_source": str(row["compatibility_source"]) if row["compatibility_source"] is not None else None,
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+    @classmethod
+    def _assert_time_intervals_do_not_overlap(cls, rows: list[Mapping[str, Any]]) -> None:
+        """Reject overlap on the business-day circle; zero-duration anchors do not occupy time."""
+        occupied: list[tuple[int, int, str]] = []
+        for row in rows:
+            start = cls._clock_minutes(str(row["start_local_time"]))
+            end = cls._clock_minutes(str(row["end_local_time"]))
+            if start == end:
+                continue
+            segments = [(start, end)] if start < end else [(start, 1440), (0, end)]
+            for segment_start, segment_end in segments:
+                for prior_start, prior_end, _ in occupied:
+                    if segment_start < prior_end and prior_start < segment_end:
+                        raise ValueError("time intervals must not overlap")
+                occupied.append((segment_start, segment_end, str(row["interval_id"])))
+
+    def list_time_intervals(self) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM daily_time_intervals ORDER BY start_local_time, interval_id"
+            ).fetchall()
+        return [self._time_interval_from_row(row) for row in rows]
+
+    def create_time_interval(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        value = self._validate_time_interval(payload)
+        now = utc_timestamp()
+        record = {"interval_id": str(uuid.uuid4()), **value, "created_at": now, "updated_at": now}
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = [dict(row) for row in connection.execute("SELECT * FROM daily_time_intervals").fetchall()]
+                self._assert_time_intervals_do_not_overlap(rows + [record])
+                connection.execute(
+                    """INSERT INTO daily_time_intervals(
+                        interval_id, name, start_local_time, end_local_time, color, tag,
+                        foreground_display, compatibility_source, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)""",
+                    (record["interval_id"], record["name"], record["start_local_time"], record["end_local_time"],
+                     record["color"], record["tag"], int(record["foreground_display"]), now, now),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            row = connection.execute("SELECT * FROM daily_time_intervals WHERE interval_id=?", (record["interval_id"],)).fetchone()
+        return self._time_interval_from_row(row)
+
+    def update_time_interval(self, interval_id: str, payload: Mapping[str, Any]) -> dict[str, Any] | None:
+        value = self._validate_time_interval(payload, partial=True)
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = connection.execute("SELECT * FROM daily_time_intervals WHERE interval_id=?", (interval_id,)).fetchone()
+                if row is None:
+                    connection.rollback()
+                    return None
+                record = dict(row)
+                record.update(value)
+                self._assert_time_intervals_do_not_overlap([
+                    record if str(item["interval_id"]) == interval_id else dict(item)
+                    for item in connection.execute("SELECT * FROM daily_time_intervals").fetchall()
+                ])
+                assignments = ", ".join(f"{key}=?" for key in value) + ", updated_at=?"
+                connection.execute(
+                    f"UPDATE daily_time_intervals SET {assignments} WHERE interval_id=?",
+                    (*value.values(), utc_timestamp(), interval_id),
+                )
+                if record.get("compatibility_source") == "sleep" and "start_local_time" in value:
+                    connection.execute(
+                        "UPDATE shared_settings SET sleep_local_time=?, settings_version=settings_version+1, updated_at=? WHERE singleton_id=1",
+                        (str(record["start_local_time"]), utc_timestamp()),
+                    )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            updated = connection.execute("SELECT * FROM daily_time_intervals WHERE interval_id=?", (interval_id,)).fetchone()
+        return self._time_interval_from_row(updated)
+
+    def delete_time_interval(self, interval_id: str) -> bool:
+        with self._connection() as connection:
+            result = connection.execute("DELETE FROM daily_time_intervals WHERE interval_id=?", (interval_id,))
+            connection.commit()
+        return result.rowcount == 1
+
+    def time_interval_state(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Return the central-authoritative current/next state for the repeating local-day circle."""
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone(timedelta(hours=8)))
+        minute = current.hour * 60 + current.minute
+        intervals = self.list_time_intervals()
+        active: dict[str, Any] | None = None
+        for item in intervals:
+            start = self._clock_minutes(item["start_local_time"])
+            end = self._clock_minutes(item["end_local_time"])
+            if start == end:
+                continue
+            contained = start <= minute < end if start < end else minute >= start or minute < end
+            if contained:
+                active = item
+                remaining = (end - minute) % 1440
+                return {
+                    "generated_at": utc_timestamp(current.astimezone(timezone.utc)),
+                    "current": active,
+                    "current_remaining_seconds": remaining * 60 - current.second,
+                    "next": None,
+                    "next_in_seconds": None,
+                }
+        candidates: list[tuple[int, dict[str, Any]]] = []
+        for item in intervals:
+            start = self._clock_minutes(item["start_local_time"])
+            delta = (start - minute) % 1440
+            if delta == 0 and current.second:
+                delta = 1440
+            candidates.append((delta, item))
+        if not candidates:
+            return {
+                "generated_at": utc_timestamp(current.astimezone(timezone.utc)),
+                "current": None,
+                "current_remaining_seconds": None,
+                "next": None,
+                "next_in_seconds": None,
+            }
+        delta, next_item = min(candidates, key=lambda item: (item[0], item[1]["interval_id"]))
+        return {
+            "generated_at": utc_timestamp(current.astimezone(timezone.utc)),
+            "current": None,
+            "current_remaining_seconds": None,
+            "next": next_item,
+            "next_in_seconds": delta * 60 - current.second,
+        }
 
     # ---------------------------------------------------------------
     # Wishes, timeline, and trigger configuration
@@ -1902,6 +2140,20 @@ class CentralStore:
                 "item_key": f"wish:{wish['wish_id']}",
                 "text": f"「{wish['text']}」{state}，{format_wish_context(wish, today_iso)}。",
             })
+        interval_state = self.time_interval_state(now=now_dt)
+        interval_items: list[dict[str, str]] = []
+        if target == local.date():
+            active_interval = interval_state.get("current")
+            next_interval = interval_state.get("next")
+            if isinstance(active_interval, dict):
+                interval_text = f"当前处于「{active_interval['name']}」时间区间（{active_interval['start_local_time']}–{active_interval['end_local_time']}）。"
+            elif isinstance(next_interval, dict):
+                minutes_to_next = max(0, int(interval_state.get("next_in_seconds") or 0) // 60)
+                interval_text = f"当前不在时间区间内；距「{next_interval['name']}」（{next_interval['start_local_time']}）还有 {minutes_to_next} 分钟。"
+            else:
+                interval_text = "尚未设置每日时间区间。"
+            interval_items.append({"item_key": "time_intervals.current", "text": interval_text})
+            realtime.append({"kind":"time_interval", "observed_at":utc_timestamp(now_dt), "is_stale":False, "include_in_ai":True, "device_id":"time_intervals", "display_text":interval_text})
         device_items = [{"item_key":"usage.total","text":f"所有设备当前业务日累计使用 {total // 3600} 小时 {(total % 3600) // 60} 分钟。"}] if total else []
         black_hours, black_minutes = divmod(black, 3600)
         black_minutes = black_minutes // 60
@@ -1963,13 +2215,14 @@ class CentralStore:
             "睡眠区间只是多设备使用数据汇总的参考估算，而非来自贴身设备的准确采集。区间时长过长不代表睡眠时间长，但区间时长短大概率代表用户缺少睡眠。",
             "活动状态数据由手机收集的步数信息和地理定位信息汇总评估得到；同一分钟缺少任一来源时不生成活动状态，也不会跨缺证据区间补写。位置事实本身仍可独立展示。",
             "位置与活动经过漂移过滤和区间合并；缺少证据时不得补写推测地点或行程。",
+            "每日时间区间是用户主动安排，不是设备采集事实；AI 可以读取并参考当前或下一个区间，但不得自行创建、修改或推断其完成情况。",
             "事件文字是中央确认的事实摘要；不要猜测未显示的应用、位置、心愿结果或动机。",
         ]
         guide = [{"item_key":f"guide:{i}","text":text} for i, text in enumerate(guide_texts, 1)]
         _weekdays = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
         _local_now = now_dt.astimezone(timezone(timedelta(hours=8)))
         generated_at_label = f"{_local_now.year}年{_local_now.month}月{_local_now.day}日 {_weekdays[_local_now.weekday()]} {_local_now:%H:%M}"
-        return {"business_date":target.isoformat(), "generated_at":utc_timestamp(now_dt), "generated_at_label":generated_at_label, "background_summary": {"wish":{"title":"心愿","items":wish_items}, "device_and_apps":{"title":"设备与应用","items":device_items}, "blacklist":{"title":"黑名单","items":black_items}, "location_and_activity":{"title":"位置与活动","items":location_items}, "device_usage_seconds":total, "blacklist_usage_seconds":black}, "ai_understanding":{"title":"AI 理解说明","items":guide,"timezone":"Asia/Shanghai","real_time_valid_for_minutes":15}, "real_time_items":realtime}
+        return {"business_date":target.isoformat(), "generated_at":utc_timestamp(now_dt), "generated_at_label":generated_at_label, "background_summary": {"wish":{"title":"心愿","items":wish_items}, "time_intervals":{"title":"时间区间","items":interval_items}, "device_and_apps":{"title":"设备与应用","items":device_items}, "blacklist":{"title":"黑名单","items":black_items}, "location_and_activity":{"title":"位置与活动","items":location_items}, "device_usage_seconds":total, "blacklist_usage_seconds":black}, "ai_understanding":{"title":"AI 理解说明","items":guide,"timezone":"Asia/Shanghai","real_time_valid_for_minutes":15}, "real_time_items":realtime}
 
     def ingest(self, batch: BatchEnvelope, request_hash: str) -> dict[str, Any]:
         with self._connection() as connection:

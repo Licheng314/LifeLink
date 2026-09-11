@@ -11,6 +11,7 @@ let eventsLoadGeneration = 0;
 let eventsTimelineCache = null;
 let eventsTimelineSignature = null;
 const eventsTimelineEtags = new Map();
+const eventsTimelinePayloads = new Map();
 let eventsTimelineRefreshInProgress = false;
 let eventFilterState = { showNormal: true, showSystem: true };
 const EVENTS_TIMELINE_REFRESH_MILLISECONDS = 30_000;
@@ -103,7 +104,17 @@ async function fTimeline() {
   const url = `/api/timeline-events?from=${encodeURIComponent(win.from)}&to=${encodeURIComponent(win.to)}`;
   const etag = eventsTimelineEtags.get(url);
   const resp = await fetch(url, {headers: etag ? {'If-None-Match': etag} : {}});
-  if (resp.status === 304) return false;
+  if (resp.status === 304) {
+    const cached = eventsTimelinePayloads.get(url);
+    // An ETag can outlive an in-memory payload only after unusual navigation
+    // or browser restoration. Retry once without it rather than showing a
+    // different business day's events.
+    if (!cached) { eventsTimelineEtags.delete(url); return fTimeline(); }
+    const changed = eventsTimelineSignature !== cached.signature;
+    eventsTimelineCache = cached.events;
+    eventsTimelineSignature = cached.signature;
+    return changed;
+  }
   if (!resp.ok) throw new Error(`时间线读取失败（${resp.status}）`);
   if (resp.headers.get('X-Life-Radio-Cache') === 'stale') wishState.stale = true;
   const data = await resp.json();
@@ -112,7 +123,8 @@ async function fTimeline() {
   const nextEvents = data.events || [];
   const nextSignature = JSON.stringify(nextEvents);
   const changed = eventsTimelineSignature !== nextSignature;
-  if (changed) eventsTimelineCache = nextEvents;
+  eventsTimelinePayloads.set(url, {events: nextEvents, signature: nextSignature});
+  eventsTimelineCache = nextEvents;
   eventsTimelineSignature = nextSignature;
   return changed;
 }
@@ -292,6 +304,14 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // 事件时间线渲染
+function scrollTimelineEventToTop(index) {
+  const timeline = document.querySelector('#events-timeline-container .events-timeline');
+  const target = timeline?.querySelector(`[data-timeline-index="${index}"]`);
+  if (!timeline || !target) return;
+  timeline.scrollTo({top: Math.max(0, target.offsetTop - timeline.offsetTop), behavior: 'smooth'});
+  target.classList.add('is-timeline-target');
+  window.setTimeout(() => target.classList.remove('is-timeline-target'), 1_200);
+}
 function renderEventsTimeline() {
   const container = document.getElementById('events-timeline-container');
   if (!container) return;
@@ -325,7 +345,7 @@ function renderEventsTimeline() {
       : (aiState === 'not_applicable'
         ? ''
         : '<span class="event-ai-mark pending" title="' + (aiName ? '待推送给 ' + escapeHtml(aiName) : '尚未连接 AI') + '" aria-label="' + (aiName ? '待推送给 ' + escapeHtml(aiName) : '尚未连接 AI') + '">待推送</span>');
-    html += '<div class="event-item event-' + tone + '">'
+    html += '<div class="event-item event-' + tone + '" data-timeline-index="' + events.indexOf(e) + '">'
       + '<div class="event-dot" aria-hidden="true" style="background:' + icon.color + '"><i data-lucide="' + icon.icon + '"></i></div>'
       + '<div class="event-time">' + escapeHtml(time) + '</div>'
       + '<div class="event-body">'
@@ -1118,9 +1138,9 @@ function renderBizDayTimeline() {
   // 清除旧标记和竖线（保留轴和红线）
   container.querySelectorAll('.bizday-tl-tick, .bizday-tl-marker, .bizday-tl-stem').forEach(el => el.remove());
 
-  // 刻度：每 4 小时，居中显示在轴下方
+  // 刻度：每 2 小时，居中显示在轴下方
   const dayStart = biz.dayStartHour;
-  for (let i = 0; i <= 24; i += 4) {
+  for (let i = 0; i <= 24; i += 2) {
     const hour = (dayStart + i) % 24;
     const pct = (i / 24) * 100;
     const tick = document.createElement('div');
@@ -1177,7 +1197,7 @@ function renderBizDayTimeline() {
     marker.style.left = `calc(${pct}% - ${markerSize / 2}px)`;
 
     // 上下交错定位：side=1 在轴上方，side=-1 在轴下方
-    const offset = (lastSide === 1 ? 6 : 24) + layer * 28; // 下方留出刻度文字空间
+    const offset = 24 + layer * 28; // 上下事件均与时间轴保持相同距离
     if (lastSide === 1) {
       marker.style.top = `${axisY - offset - markerSize}px`;
     } else {
@@ -1185,6 +1205,7 @@ function renderBizDayTimeline() {
     }
     marker.innerHTML = '<i data-lucide="' + icon.icon + '" style="color:#fff;width:14px;height:14px"></i>';
     marker.style.background = icon.color;
+    marker.addEventListener('click', () => scrollTimelineEventToTop(events.indexOf(e)));
     container.appendChild(marker);
 
     // 竖线：从标记边缘到轴
@@ -1250,6 +1271,7 @@ function renderBizDayTimeline() {
   // 每分钟更新红线
   if (bizDayTimelineNowTimer) clearInterval(bizDayTimelineNowTimer);
   bizDayTimelineNowTimer = setInterval(() => updateBizDayNowLine(fromMs, span), 60000);
+  if (typeof renderTimeIntervals === 'function') renderTimeIntervals();
   if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 

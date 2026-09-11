@@ -12,7 +12,7 @@ class DeviceManagementContractTests(unittest.TestCase):
         cls.delivery = (ROOT / "central-delivery-v1.md").read_text(encoding="utf-8")
 
     def test_v19_declares_management_paths_and_post_compatibility(self):
-        self.assertIn("version: 1.15.5", self.openapi)
+        self.assertIn("version: 1.16.0", self.openapi)
         for marker in (
             "/v1/devices:",
             "/v1/devices/{device_id}:",

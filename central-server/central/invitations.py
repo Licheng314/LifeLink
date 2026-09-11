@@ -22,6 +22,7 @@ INVITATION_PREFIX = "LR1."
 CLAIM_SCHEMA = "life-radio-enrollment-claim-v1"
 PROFILE_SCHEMA = "life-radio-client-profile-v1"
 INVITATION_SCOPES = {"upload", "dashboard"}
+LOCAL_INVITATION_HOST = "127.0.0.1"
 
 
 class EnrollmentConfigurationError(RuntimeError):
@@ -109,8 +110,8 @@ def decode_invitation(code: str) -> dict[str, Any]:
     ):
         raise ValueError("invitation token is invalid")
     base_url = payload.get("central_base_url")
-    if not isinstance(base_url, str) or not base_url.startswith("https://"):
-        raise ValueError("central_base_url must use HTTPS")
+    if not _is_allowed_invitation_origin(base_url):
+        raise ValueError("central_base_url must use HTTPS or exact local loopback HTTP")
     return payload
 
 
@@ -128,17 +129,16 @@ def create_invitation(
         raise ValueError("invitation lifetime must be positive")
     parsed_url = urlsplit(central_base_url.strip())
     if (
-        parsed_url.scheme.lower() != "https"
-        or not parsed_url.hostname
+        not _is_allowed_invitation_origin(central_base_url)
         or parsed_url.username
         or parsed_url.password
         or parsed_url.path not in {"", "/"}
         or parsed_url.query
         or parsed_url.fragment
     ):
-        raise ValueError("central_base_url must be an HTTPS origin")
+        raise ValueError("central_base_url must be an HTTPS origin or exact local loopback HTTP origin")
     normalized_base_url = urlunsplit(
-        ("https", parsed_url.netloc.lower(), "", "", "")
+        (parsed_url.scheme.lower(), parsed_url.netloc.lower(), "", "", "")
     )
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     invitation_id = str(uuid.uuid4())
@@ -162,6 +162,24 @@ def create_invitation(
         expires_at=expires_at,
     )
     return CreatedInvitation(code, invitation_id, expires_at, scope)
+
+
+def _is_allowed_invitation_origin(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    parsed = urlsplit(value.strip())
+    if (
+        not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return False
+    if parsed.scheme.lower() == "https":
+        return True
+    return parsed.scheme.lower() == "http" and parsed.hostname == LOCAL_INVITATION_HOST
 
 
 def validate_claim_payload(payload: Any) -> dict[str, Any]:

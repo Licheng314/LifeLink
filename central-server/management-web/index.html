@@ -10,7 +10,8 @@
 <script src="/assets/vendor/lucide.js"></script>
 <link rel="stylesheet" href="/assets/styles/base.css?v=20260829-6">
 <link rel="stylesheet" href="/assets/styles/components.css?v=20260906-1">
-<link rel="stylesheet" href="/assets/styles/wishes-events.css?v=20260831-2">
+<link rel="stylesheet" href="/assets/styles/wishes-events.css?v=20260908-4">
+<link rel="stylesheet" href="/assets/styles/time-intervals.css?v=20260908-15">
 <link rel="stylesheet" href="/assets/styles/central-management.css">
 <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
 </head>
@@ -94,10 +95,11 @@
 
     <!-- 业务日时间轴 -->
     <div class="chart-panel">
-      <h3><i data-lucide="clock"></i> 业务日时间轴</h3>
+      <div class="event-timeline-heading time-interval-heading"><h3><i data-lucide="clock"></i> 业务日时间轴 <span id="time-interval-current" class="time-interval-current">正在读取当前安排…</span></h3><div id="time-interval-actions" class="time-interval-actions"><button type="button" id="time-interval-create" class="wish-history-open">新增区间</button></div></div>
       <div id="bizday-timeline-wrap">
         <div id="bizday-timeline" class="bizday-timeline">
           <div class="bizday-tl-axis"></div>
+          <div id="bizday-time-intervals" class="bizday-time-intervals" aria-label="每日重复时间区间。点击空白处可取消选择。"></div>
           <div id="bizday-tl-now" class="bizday-tl-now" style="display:none"><span class="now-label">现在</span><span class="now-time">--:--</span></div>
         </div>
         <div id="bizday-tl-tooltip" class="activity-chart-tooltip" hidden></div>
@@ -240,19 +242,20 @@
       <h2><i data-lucide="settings"></i> 中央管理</h2>
       <div class="desc">管理已连接设备、网络与其他中央设置</div>
     </div>
+
     <div class="cards-row" id="sync-device-cards">
       <div class="stat-card accent"><div class="label">设备</div><div class="value">检测中...</div><div class="sub">正在读取中央设备名册</div></div>
     </div>
     <div class="central-device-divider" aria-hidden="true"></div>
     <section class="chart-panel">
-      <h3><i data-lucide="network"></i> 网络配置</h3>
-      <p id="central-network-summary" class="event-muted">正在读取中央连接状态…</p>
+      <h3><i data-lucide="network"></i> 远程连接（可选）</h3>
+      <p id="central-network-summary" class="event-muted">仅在手机、其他电脑或 AI 需要远程访问时配置；本机测试可留空。</p>
       <div class="device-setting-row">
         <label for="central-provider">连接方式</label>
         <select id="central-provider"><option value="public_domain">公网服务器 / 域名</option><option value="tailscale">Tailscale</option><option value="https_tunnel">HTTPS 内网穿透</option></select>
       </div>
       <div class="device-setting-row">
-        <label for="central-base-url">外部 HTTPS 地址</label>
+        <label for="central-base-url">远程 HTTPS 地址</label>
         <input id="central-base-url" type="url" placeholder="https://life.example.com" autocomplete="url">
       </div>
       <div class="central-management-actions"><button type="button" class="central-action primary" id="central-verify-network">验证并保存</button><button type="button" class="central-action secondary" id="central-detect-tailscale">自动检测 Tailscale</button></div>
@@ -260,8 +263,8 @@
     </section>
     <section class="chart-panel">
       <h3><i data-lucide="key-round"></i> 设备配对</h3>
-      <p class="event-muted">先完成外部 HTTPS 地址验证，再生成一次性 PC 或 Android 邀请码。</p>
-      <button type="button" class="central-action primary" id="central-create-invitation">生成设备配对码</button>
+      <p class="event-muted">远程设备需先完成 HTTPS 地址验证。本机 PC 可直接使用本机配对码测试采集与同步。</p>
+      <div class="central-management-actions"><button type="button" class="central-action primary" id="central-create-invitation">生成设备配对码</button><button type="button" class="central-action secondary" id="central-create-local-invitation">生成本机客户端配对码</button></div>
       <pre id="central-invitation" class="central-management-output" aria-live="polite"></pre>
     </section>
     <section class="chart-panel">
@@ -281,7 +284,8 @@
 
 </div>
 
-<script src="/assets/scripts/wishes-events.js?v=20260905-1"></script>
+<script src="/assets/scripts/wishes-events.js?v=20260908-5"></script>
+<script src="/assets/scripts/time-intervals.js?v=20260908-18"></script>
 <script src="/assets/scripts/shared-ui.js?v=20260830-1"></script>
 <script src="/assets/scripts/usage.js?v=20260906-1"></script>
 <script src="/assets/scripts/health-info.js?v=20260829-1"></script>

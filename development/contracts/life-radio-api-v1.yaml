@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Life Link Context Sync API
-  version: 1.15.5
+  version: 1.16.0
   description: |
     Android、PC/Web 采集器与中央上下文服务之间的同步协议。
     所有时间均为 UTC ISO 8601（带 Z），持续时长单位为秒。
@@ -34,6 +34,7 @@ info:
     v1.15.3 固定个人模式只连接一个 AI：新 reader 成功领取时原子撤销其他 reader Token并保留历史审计；AI 上下文把 understanding 放在背景和事件之前，并允许同机 reader 在配对时保存不含完整路径和 PID 的稳定应用进程绑定。
     v1.15.4 为时间线读取增加 ETag 条件校验；内容未变化时返回无正文的 304，避免 PC 小窗与 WebUI 重复下载完整业务日数据。
     v1.15.5 增加周历业务日摘要读取；以共享跨日起点按互斥模块返回逻辑内容量，不改变认证、上传或 SQLite 数据。
+    v1.16.0 增加中央权威的每日重复时间区间；它是用户主动安排而非采集事实，普通区间在业务日环中不得重叠，起止相同表示零时长时间锚。
 servers:
   - url: https://{host}
     variables:
@@ -1131,6 +1132,77 @@ paths:
           description: 请求字段或值无效，或主健康设备不是当前 Android 设备
         '401':
           description: 缺失或无效的已注册设备 Bearer Token；独立只读 Token 不具备设备修改权限
+  /v1/time-intervals:
+    get:
+      summary: 读取中央权威的每日重复时间区间与当前状态
+      operationId: listTimeIntervals
+      security:
+        - readBearerAuth: []
+        - registeredDeviceAuth: []
+      responses:
+        '200':
+          description: 区间按本地开始时刻排序；state 由中央 Asia/Shanghai 时钟计算，浏览器与 PC 不自行解释跨业务日。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeIntervalsResponse'
+        '401':
+          description: 缺失或无效的独立只读或已注册设备 Bearer Token。
+    post:
+      summary: 新增每日重复时间区间
+      operationId: createTimeInterval
+      security:
+        - registeredDeviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimeIntervalWrite'
+      responses:
+        '201':
+          description: 创建成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeInterval'
+        '400':
+          description: 字段、颜色、标签或本地时刻无效。
+        '409':
+          description: 与已有普通区间重叠；原设置保持不变。
+        '401':
+          description: 缺失或无效的已注册设备 Bearer Token。
+  /v1/time-intervals/{interval_id}:
+    patch:
+      summary: 局部修改每日重复时间区间
+      operationId: updateTimeInterval
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TimeIntervalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimeIntervalPatch'
+      responses:
+        '200': {description: 更新成功}
+        '400': {description: 请求无效}
+        '401': {description: 缺失或无效的已注册设备 Bearer Token}
+        '404': {description: time_interval_not_found}
+        '409': {description: 更新会与已有普通区间重叠}
+    delete:
+      summary: 删除每日重复时间区间
+      operationId: deleteTimeInterval
+      security:
+        - registeredDeviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TimeIntervalId'
+      responses:
+        '204': {description: 删除成功}
+        '401': {description: 缺失或无效的已注册设备 Bearer Token}
+        '404': {description: time_interval_not_found}
   /v1/settings/blacklist-rules:
     get:
       summary: 列出全部黑名单规则（只读凭据或已注册设备凭据）
@@ -1406,6 +1478,13 @@ components:
         format: date
     TriggerId:
       name: trigger_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TimeIntervalId:
+      name: interval_id
       in: path
       required: true
       schema:
@@ -2624,10 +2703,13 @@ components:
     EventBackgroundSummary:
       type: object
       additionalProperties: false
-      required: [wish, device_and_apps, blacklist, location_and_activity]
+      required: [wish, time_intervals, device_and_apps, blacklist, location_and_activity]
       properties:
         wish:
           $ref: '#/components/schemas/EventBackgroundSection'
+        time_intervals:
+          $ref: '#/components/schemas/EventBackgroundSection'
+          description: 用户主动设置的每日重复安排；只在请求当前业务日时提供当前或下一个区间，不表示已完成或采集事实。
         device_and_apps:
           $ref: '#/components/schemas/EventBackgroundSection'
         blacklist:
@@ -3058,6 +3140,68 @@ components:
           type: integer
           enum: [30, 60, 120, 180, 240]
           description: The complete and only allowed periodic-summary cadence list. The local-time range may cross a natural-date boundary but never causes a report to read outside its business day.
+    TimeIntervalWrite:
+      type: object
+      additionalProperties: false
+      required: [name, start_local_time, end_local_time, color, tag, foreground_display]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 50}
+        start_local_time: {$ref: '#/components/schemas/LocalClockTime'}
+        end_local_time: {$ref: '#/components/schemas/LocalClockTime'}
+        color: {type: string, enum: ['#2563EB', '#7C3AED', '#DB2777', '#EA580C', '#16A34A', '#0891B2']}
+        tag: {type: [string, 'null'], enum: [alert, null]}
+        foreground_display: {type: boolean, default: true}
+      description: 同起止时刻表示不占用时段的时间锚；其他区间可跨业务日边界但不得重叠。
+    TimeIntervalPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: {type: string, minLength: 1, maxLength: 50}
+        start_local_time: {$ref: '#/components/schemas/LocalClockTime'}
+        end_local_time: {$ref: '#/components/schemas/LocalClockTime'}
+        color: {type: string, enum: ['#2563EB', '#7C3AED', '#DB2777', '#EA580C', '#16A34A', '#0891B2']}
+        tag: {type: [string, 'null'], enum: [alert, null]}
+        foreground_display: {type: boolean}
+    TimeInterval:
+      allOf:
+        - $ref: '#/components/schemas/TimeIntervalWrite'
+        - type: object
+          required: [interval_id, is_time_anchor, compatibility_source, created_at, updated_at]
+          properties:
+            interval_id: {type: string, format: uuid}
+            is_time_anchor: {type: boolean, readOnly: true}
+            compatibility_source: {type: [string, 'null'], enum: [sleep, personal_time, null], readOnly: true}
+            created_at: {type: string, format: date-time, pattern: 'Z$'}
+            updated_at: {type: string, format: date-time, pattern: 'Z$'}
+    TimeIntervalState:
+      type: object
+      additionalProperties: false
+      required: [generated_at, current, current_remaining_seconds, next, next_in_seconds]
+      properties:
+        generated_at: {type: string, format: date-time, pattern: 'Z$'}
+        current:
+          oneOf:
+            - $ref: '#/components/schemas/TimeInterval'
+            - type: 'null'
+        current_remaining_seconds: {type: [integer, 'null'], minimum: 0}
+        next:
+          oneOf:
+            - $ref: '#/components/schemas/TimeInterval'
+            - type: 'null'
+        next_in_seconds: {type: [integer, 'null'], minimum: 0}
+    TimeIntervalsResponse:
+      type: object
+      additionalProperties: false
+      required: [intervals, state]
+      properties:
+        intervals:
+          type: array
+          items: {$ref: '#/components/schemas/TimeInterval'}
+        state: {$ref: '#/components/schemas/TimeIntervalState'}
+    LocalClockTime:
+      type: string
+      pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'
     SharedSettings:
       type: object
       additionalProperties: false

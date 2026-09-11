@@ -306,6 +306,5 @@ class CentralClientSetupTests(unittest.TestCase):
         start_client.assert_called_once_with(profile)
         show_error.assert_not_called()
 
-
 if __name__ == "__main__":
     unittest.main()

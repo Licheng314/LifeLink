@@ -24,7 +24,7 @@ LR1.<base64url-without-padding-of-compact-utf8-json>
 - 解码后的对象必须符合 [`one-line-invitation-payload-v1.schema.json`](one-line-invitation-payload-v1.schema.json)，字段固定为 `v`、`invitation_id`、`central_base_url`、`invitation_token`、`scope`、`expires_at`。
 - `scope` 只允许 `upload` 或 `dashboard`。`upload` 只能申领上传能力；`dashboard` 允许服务端在长期配置中附加全量 `read_token`。
 - 新建邀请的默认有效期是 24 小时。服务端可允许管理员选择更短有效期，但不得由客户端延长 `expires_at`。
-- 客户端必须在联网前完成前缀、Base64、JSON、schema、HTTPS 地址和过期时间校验，并对输入设置合理长度上限。解析 URL 时还必须拒绝用户名、密码、查询参数和 fragment。
+- 客户端必须在联网前完成前缀、Base64、JSON、schema、地址和过期时间校验，并对输入设置合理长度上限。默认只接受 HTTPS 地址；中央本机管理页签发的“本机客户端配对码”是唯一例外，只能使用精确 `http://127.0.0.1:<端口>`，因此只能由同一主机上的 PC 客户端领取。解析 URL 时还必须拒绝用户名、密码、查询参数和 fragment。
 
 邀请码包含短期秘密。契约与 fixture 不提供可用邀请码或真实 Token；测试应在内存中生成一次性假值。
 

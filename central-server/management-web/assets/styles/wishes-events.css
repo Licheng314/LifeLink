@@ -55,6 +55,7 @@
 
 /* 事件时间线条目 */
 .events-timeline { max-height:600px; overflow-y:auto }
+.event-item.is-timeline-target { box-shadow:0 0 0 2px var(--accent), 0 3px 12px rgba(79,140,255,.18); }
 .event-item { display:flex; gap:12px; padding:13px 14px; margin:8px 0; border:1px solid var(--border); border-left:4px solid var(--accent); border-radius:8px; background:var(--bg); font-size:15px }
 .event-item.event-high { margin-left:0; border:2px solid var(--warning); border-left-width:4px; border-left-color:var(--warning); box-shadow:0 2px 9px rgba(251,191,36,.14) }
 .event-item.event-normal { margin-left:16px }
@@ -175,7 +176,7 @@
 
 /* === 业务日时间轴 === */
 #bizday-timeline-wrap { position: relative; }
-.bizday-timeline { position: relative; width: 100%; height: 192px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+.bizday-timeline { position: relative; width: 100%; height: 236px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
 .bizday-tl-axis { position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--border); transform: translateY(-0.5px); }
 .bizday-tl-tick { position: absolute; top: 50%; font-size: 11px; color: var(--text-secondary); transform: translate(-50%, 10px); white-space: nowrap; }
 .bizday-tl-tick::before { content:''; position:absolute; left:50%; top:-7px; width:1px; height:5px; background:var(--border); }

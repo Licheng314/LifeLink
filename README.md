@@ -23,9 +23,9 @@ Life Link 可以收集：
 
 ## 连接拓扑
 
-AI 伴侣、Life Link 服务端和第一台 PC 客户端可以运行在同一台电脑上。其他电脑上的 PC 客户端和 Android 客户端，都可以通过 Tailscale 或花生壳提供的 HTTPS 入口连接中央服务。
+中央服务可以运行在云端，PC 客户端、Android 客户端与 AI 伴侣都通过同一个 HTTPS 域名连接它。服务器管理页不公开到公网，只通过 SSH 隧道在管理员本机访问。
 
-![Life Link 基础连接拓扑](assets/readme/life-link-topology.png)
+![Life Link 基础连接拓扑](assets/readme/life-link-topology.svg)
 
 ## 能做什么
 

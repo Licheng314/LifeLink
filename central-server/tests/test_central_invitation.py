@@ -332,11 +332,24 @@ class CentralInvitationTests(unittest.TestCase):
                 now=started + timedelta(hours=2),
             )
 
-    def test_core_invitation_creator_rejects_non_https_url(self):
+    def test_core_invitation_creator_allows_exact_local_loopback_http_only(self):
         with self.assertRaisesRegex(ValueError, "HTTPS origin"):
             create_invitation(
                 self.server.store,
                 central_base_url="http://central.example.test",
+            )
+        created = create_invitation(
+            self.server.store,
+            central_base_url="http://127.0.0.1:18091",
+        )
+        self.assertEqual(
+            decode_invitation(created.code)["central_base_url"],
+            "http://127.0.0.1:18091",
+        )
+        with self.assertRaisesRegex(ValueError, "origin"):
+            create_invitation(
+                self.server.store,
+                central_base_url="http://127.0.0.1:18091/not-an-origin",
             )
 
     def test_dashboard_claim_without_read_token_is_not_consumed(self):

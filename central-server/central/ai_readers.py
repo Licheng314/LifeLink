@@ -1024,7 +1024,7 @@ class AIReaderService:
     ) -> dict[str, Any]:
         background_lines: list[str] = []
         summary = background.get("background_summary") or {}
-        for key in ("wish", "device_and_apps", "blacklist", "location_and_activity"):
+        for key in ("wish", "time_intervals", "device_and_apps", "blacklist", "location_and_activity"):
             section = summary.get(key) or {}
             title = str(section.get("title") or "").strip()
             for item in section.get("items") or []:

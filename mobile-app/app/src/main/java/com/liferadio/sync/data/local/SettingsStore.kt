@@ -102,6 +102,16 @@ class SettingsStore(context: Context) {
         get() = prefs.getLong(KEY_LOCATION_LAST_DETECTED_AT, 0L)
         set(value) = prefs.edit().putLong(KEY_LOCATION_LAST_DETECTED_AT, value).apply()
 
+    var lastLocationDiagnostic: String
+        get() = prefs.getString(KEY_LOCATION_DIAGNOSTIC, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_LOCATION_DIAGNOSTIC, value).apply()
+
+    fun recordLocationDiagnostic(message: String) {
+        prefs.edit()
+            .putString(KEY_LOCATION_DIAGNOSTIC, message)
+            .apply()
+    }
+
     fun saveLastLocation(latitude: Double, longitude: Double, accuracyMeters: Float) {
         prefs.edit()
             .putString(KEY_LOCATION_LAST_LATITUDE, latitude.toString())
@@ -398,6 +408,7 @@ class SettingsStore(context: Context) {
         private const val KEY_LOCATION_TRACKING_ENABLED = "location_tracking_enabled"
         private const val KEY_BACKGROUND_AUTOSTART_CONFIRMED = "background_autostart_confirmed"
         private const val KEY_LOCATION_LAST_DETECTED_AT = "location_last_detected_at"
+        private const val KEY_LOCATION_DIAGNOSTIC = "location_diagnostic"
         private const val KEY_LOCATION_LAST_LATITUDE = "location_last_latitude"
         private const val KEY_LOCATION_LAST_LONGITUDE = "location_last_longitude"
         private const val KEY_LOCATION_LAST_ACCURACY = "location_last_accuracy"

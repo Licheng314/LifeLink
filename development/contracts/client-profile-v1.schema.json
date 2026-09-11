@@ -19,8 +19,8 @@
     "central_base_url": {
       "type": "string",
       "format": "uri",
-      "pattern": "^https://[^\\s?#]+(?:/[^\\s?#]*)?$",
-      "description": "Absolute HTTPS base URL of the central context service. Query strings and fragments are not allowed."
+      "pattern": "^(?:https://[^\\s?#]+|http://127\\.0\\.0\\.1(?::[0-9]{1,5})?)/?$",
+      "description": "Absolute HTTPS base URL of the central context service, or exact host-loopback HTTP for a local desktop profile. Query strings and fragments are not allowed."
     },
     "device": {
       "$ref": "#/$defs/enrollment_device"

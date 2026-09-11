@@ -55,6 +55,14 @@
       await navigator.clipboard?.writeText(result.code).catch(() => {});
     } catch (error) { output.textContent = error.message; }
   });
+  byId('central-create-local-invitation')?.addEventListener('click', async () => {
+    const output = byId('central-invitation'); output.textContent = '正在生成本机客户端配对码…';
+    try {
+      const result = await post('/api/local-device-invitations');
+      output.textContent = `${result.code}\n有效至：${result.expires_at}\n仅能用于当前主机上的 PC 客户端。`;
+      await navigator.clipboard?.writeText(result.code).catch(() => {});
+    } catch (error) { output.textContent = error.message; }
+  });
   async function downloadAIPackage(options = {}) {
     const statusTarget = options.statusTarget || 'central-package-feedback';
     feedback(statusTarget, '正在生成并下载 AI 配对包…');

@@ -28,7 +28,7 @@ class WishEventContractTests(unittest.TestCase):
         cls.fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
     def test_version_and_existing_ack_are_preserved(self) -> None:
-        self.assertIn("version: 1.15.5", self.openapi)
+        self.assertIn("version: 1.16.0", self.openapi)
         upload = yaml_block(self.openapi, "/v1/events/batches:", 2)
         self.assertIn("confirmed_event_ids", upload)
         self.assertIn("accepted_event_ids", upload)

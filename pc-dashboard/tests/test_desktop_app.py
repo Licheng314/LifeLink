@@ -18,6 +18,9 @@ from desktop_app import (
     TIMELINE_FETCH_FAILED,
     TIMELINE_UNCHANGED,
     visible_timeline_events,
+    business_day_interval_segments,
+    format_clock_duration,
+    format_hour_minutes,
 )
 
 
@@ -30,6 +33,22 @@ class FakeClock:
 
 
 class SedentaryTimerTests(unittest.TestCase):
+    def test_business_day_interval_segments_split_at_the_business_day_edge(self):
+        self.assertEqual(
+            business_day_interval_segments("19:30", "21:00", 4),
+            [(930, 1020)],
+        )
+        self.assertEqual(
+            business_day_interval_segments("22:00", "06:00", 4),
+            [(1080, 1440), (0, 120)],
+        )
+
+    def test_time_interval_countdown_uses_clock_format(self):
+        self.assertEqual(format_clock_duration(3_911), "1:05:11")
+        self.assertEqual(format_clock_duration(11), "0:00:11")
+        self.assertEqual(format_hour_minutes(3_911), "1 时 5 分")
+        self.assertEqual(format_hour_minutes(1_620), "27 分")
+
     def test_tray_uses_the_packaged_client_icon(self):
         self.assertEqual(
             desktop_app.TRAY_ICON_FILE,
@@ -317,10 +336,53 @@ class DesktopTopmostControlTests(unittest.TestCase):
         self.assertIn("command=self.apply_topmost", source)
         self.assertIn("self.title_topmost_check,", source)
 
+    def test_collapsing_reuses_fixed_sizes_without_forcing_a_full_layout_flush(self):
+        source = Path(desktop_app.__file__).read_text(encoding="utf-8")
+        toggle = source[source.index("    def toggle_collapsed"):source.index("    def active_leave", source.index("    def toggle_collapsed"))]
+        self.assertIn("self.outer.configure(pady=SEDENTARY_CARD_TOP_GAP)", toggle)
+        self.assertIn("self.outer.configure(pady=8)", toggle)
+        self.assertIn("max(280, self.sedentary_card.winfo_reqwidth() + 20)", toggle)
+        self.assertIn("self.totals_row.pack(fill=\"x\", before=self.sedentary_card)", toggle)
+        self.assertIn("self.root.after_idle(self.redraw_progress)", toggle)
+        self.assertNotIn("update_idletasks", toggle)
+        self.assertNotIn("self.sedentary_card.pack_forget()", toggle)
+
     def test_status_window_has_dashboard_button_and_tray_left_click_opens_status(self):
         source = Path(desktop_app.__file__).read_text(encoding="utf-8")
-        self.assertIn("text=\"打开 Dashboard\", command=self.open_dashboard", source)
-        self.assertIn("self.dashboard_button.pack(fill=\"x\", pady=(7, 0))", source)
+        self.assertEqual(
+            desktop_app.LIFE_LINK_LOGO_FILE,
+            Path(desktop_app.__file__).resolve().parent / "assets" / "life-link-logo-108.png",
+        )
+        self.assertTrue(desktop_app.LIFE_LINK_LOGO_FILE.is_file())
+        self.assertEqual(desktop_app.LIFE_LINK_LOGO_FILE.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertIn("self.dashboard_button = tk.Canvas(", source)
+        self.assertIn(").subsample(2, 2)", source)
+        self.assertNotIn("from PIL import", source)
+        self.assertIn("height=usage_card_height", source)
+        self.assertIn("self.personal_progress_canvas = tk.Canvas(", source)
+        self.assertIn("self.personal_timeline_canvas = tk.Canvas(", source)
+        self.assertIn("height=6, background=self.card_border", source)
+        self.assertIn("self.time_intervals: list[dict[str, object]] = []", source)
+        self.assertIn("text=\"时间区间总览\"", source)
+        self.assertIn("canvas.create_rectangle(", source)
+        self.assertIn("center_y - 1", source)
+        self.assertIn("center_y + 1", source)
+        self.assertNotIn('capstyle="round"', source)
+        self.assertIn("center_y - 3", source)
+        self.assertIn("fill=\"#ef4444\", width=2", source)
+        self.assertIn("business_day_interval_segments(", source)
+        self.assertIn("COLLAPSED_IDLE_ALPHA = 0.30", source)
+        self.assertIn("def _update_collapsed_hover_alpha", source)
+        self.assertIn("self.backdrop = tk.Toplevel(root)", source)
+        self.assertIn("def _fade_backdrop_to", source)
+        self.assertNotIn("def _fade_window_to", source)
+        self.assertIn("+ SEDENTARY_CARD_TOP_GAP * 2", source)
+        self.assertIn("self.sedentary_card.pack_configure(pady=0)", source)
+        self.assertIn("self.sedentary_card.pack_configure(pady=(SEDENTARY_CARD_TOP_GAP, 0))", source)
+        self.assertIn("if widget is self.sedentary_card:", source)
+        self.assertIn("self.titlebar_substrate_widgets = {", source)
+        self.assertIn("self.dashboard_button.grid(row=0, column=0", source)
+        self.assertNotIn("text=\"打开 Dashboard\"", source)
         self.assertIn("self.ack_slot, self.ack_button, self.dashboard_button", source)
         self.assertIn(
             'if lparam == self.WM_LBUTTONUP:\n                self.command_queue.put("status")',

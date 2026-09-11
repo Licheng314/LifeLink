@@ -3,6 +3,8 @@ package com.liferadio.sync.ui.screens
 import android.app.Application
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import androidx.core.content.ContextCompat
@@ -25,8 +27,11 @@ import com.liferadio.sync.data.local.LocalActivityClassifier
 import com.liferadio.sync.data.model.CentralHealthInfo
 import com.liferadio.sync.data.remote.CentralHealthInfoClient
 import com.liferadio.sync.data.remote.HealthInfoFetchResult
+import com.liferadio.sync.data.remote.CentralWebSessionClient
+import com.liferadio.sync.data.remote.WebUiSessionResult
 import com.liferadio.sync.service.SyncService
 import com.liferadio.sync.service.LocationTrackingService
+import com.liferadio.sync.service.LocationTrackingHealthPolicy
 import com.liferadio.sync.service.CentralSyncCoordinator
 import com.liferadio.sync.service.CentralSyncLoopResult
 import kotlinx.coroutines.flow.*
@@ -67,6 +72,8 @@ data class UiState(
     val enrollmentMessage: String = "",
     val centralLastStatus: String = "",
     val centralNextRetryAt: Long = 0L,
+    val webUiOpening: Boolean = false,
+    val webUiError: String = "",
     val sharedDayStartHour: Int = 0,
     val sharedSettingsLoadedFromCentral: Boolean = false,
     val sharedSettings: CentralSharedSettings? = null,
@@ -76,7 +83,10 @@ data class UiState(
     val usageStatsPermissionGranted: Boolean = false,
     val locationTrackingEnabled: Boolean = false,
     val locationPermissionGranted: Boolean = false,
+    val fineLocationPermissionGranted: Boolean = false,
     val locationServiceRunning: Boolean = false,
+    val locationStale: Boolean = false,
+    val locationDiagnostic: String = "",
     val batteryOptimizationDisabled: Boolean = false,
     /** User-confirmed only: Android does not expose OEM auto-start switches to apps. */
     val backgroundAutostartConfirmed: Boolean = false,
@@ -142,6 +152,7 @@ data class UiState(
     val timelineEvents: List<com.liferadio.sync.data.model.TimelineEvent> = emptyList(),
     val timelineLoading: Boolean = false,
     val timelineCacheOnly: Boolean = false,
+    val timelineError: String = "",
     val eventBackground: com.liferadio.sync.data.model.EventBackgroundResponse? = null,
     val eventBackgroundOffline: Boolean = false
 )
@@ -434,10 +445,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun refreshLocationStatusInternal() {
         val application = getApplication<Application>()
-        val hasPermission = ContextCompat.checkSelfPermission(
+        val hasFinePermission = ContextCompat.checkSelfPermission(
             application,
             Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED || ContextCompat.checkSelfPermission(
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasPermission = hasFinePermission || ContextCompat.checkSelfPermission(
             application,
             Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
@@ -472,8 +484,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 locationTrackingEnabled = settings.isLocationTrackingEnabled,
                 locationPermissionGranted = hasPermission,
+                fineLocationPermissionGranted = hasFinePermission,
                 locationServiceRunning = LocationTrackingService.isRunning,
                 lastLocationDetectedAt = settings.lastLocationDetectedAt.takeIf { timestamp -> timestamp > 0L },
+                locationStale = LocationTrackingHealthPolicy.isStale(
+                    enabled = settings.isLocationTrackingEnabled,
+                    lastAcceptedAt = settings.lastLocationDetectedAt,
+                    now = System.currentTimeMillis()
+                ),
+                locationDiagnostic = settings.lastLocationDiagnostic,
                 lastLocation = lastLocation,
                 todayLocationSummary = summary
             )
@@ -594,6 +613,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 centralLastStatus = settings.centralLastStatus,
                 centralNextRetryAt = settings.centralNextRetryAt
             )
+        }
+    }
+
+    fun openCentralWebUi() {
+        if (_uiState.value.webUiOpening) return
+        _uiState.update { it.copy(webUiOpening = true, webUiError = "") }
+        viewModelScope.launch {
+            val result = runCatching {
+                CentralWebSessionClient(settings.centralBaseUrl, settings::getCentralToken).create()
+            }.getOrElse { WebUiSessionResult.Failure("无法创建 WebUI 访问会话") }
+            when (result) {
+                is WebUiSessionResult.Success -> {
+                    val application = getApplication<Application>()
+                    application.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse(result.webUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                    _uiState.update { it.copy(webUiOpening = false, webUiError = "") }
+                }
+                is WebUiSessionResult.Failure -> {
+                    _uiState.update { it.copy(webUiOpening = false, webUiError = result.message) }
+                }
+            }
         }
     }
 
@@ -1103,14 +1144,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         settings.saveTimelineCache(json, System.currentTimeMillis())
                         _uiState.update {
                             it.copy(
-                                timelineEvents = todayAndYesterdayTimelineEvents(resp.events, dayStartHour, now),
+                                timelineEvents = currentBusinessDayTimelineEvents(resp.events, dayStartHour, now),
                                 timelineLoading = false,
-                                timelineCacheOnly = false
+                                timelineCacheOnly = false,
+                                timelineError = ""
                             )
                         }
                     }
                     is com.liferadio.sync.data.remote.WishResult.Failure -> {
-                        _uiState.update { it.copy(timelineLoading = false) }
+                        _uiState.update { it.copy(timelineLoading = false, timelineError = result.reason) }
                         loadTimelineFromCache()
                     }
                 }
@@ -1140,13 +1182,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadTimelineFromCache() {
-        val json = settings.timelineCacheJson ?: return
+        val json = settings.timelineCacheJson ?: run {
+            _uiState.update { it.copy(timelineLoading = false, timelineCacheOnly = true) }
+            return
+        }
         val resp = runCatching {
             moshi.adapter(com.liferadio.sync.data.model.TimelineEventListResponse::class.java).fromJson(json)
-        }.getOrNull() ?: return
+        }.getOrNull() ?: run {
+            _uiState.update { it.copy(timelineLoading = false, timelineCacheOnly = true) }
+            return
+        }
         _uiState.update {
             it.copy(
-                timelineEvents = todayAndYesterdayTimelineEvents(
+                timelineEvents = currentBusinessDayTimelineEvents(
                     resp.events,
                     _uiState.value.sharedDayStartHour,
                     Instant.now()

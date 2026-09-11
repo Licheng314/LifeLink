@@ -14,7 +14,15 @@ from urllib.request import Request, build_opener, ProxyHandler
 from central.config import CentralConfig
 from central.http import create_server
 from central.ai_connection_package import ConnectionPackage, create_connection_package
-from central.management import create_management_server, management_bind_host, management_public_port
+from central.invitations import decode_invitation
+from central.management import (
+    create_management_server,
+    data_local_url,
+    data_public_port,
+    management_bind_host,
+    management_local_url,
+    management_public_port,
+)
 from configure_tailscale_endpoint import TailscaleSetupError
 import central_windows_startup
 
@@ -68,6 +76,17 @@ class CentralManagementTests(unittest.TestCase):
         self.assertEqual(management_public_port(8092, {"LIFE_LINK_MANAGEMENT_PUBLIC_PORT": "18092"}), 18092)
         with self.assertRaisesRegex(ValueError, "integer"):
             management_public_port(8092, {"LIFE_LINK_MANAGEMENT_PUBLIC_PORT": "nope"})
+
+    def test_local_urls_use_loopback_and_explicit_docker_host_ports(self):
+        self.assertEqual(
+            management_local_url(8092, {"LIFE_LINK_MANAGEMENT_PUBLIC_PORT": "18092"}),
+            "http://127.0.0.1:18092",
+        )
+        self.assertEqual(data_public_port(8091, {"LIFE_LINK_DATA_PUBLIC_PORT": "18091"}), 18091)
+        self.assertEqual(
+            data_local_url(8091, {"LIFE_LINK_DATA_PUBLIC_PORT": "18091"}),
+            "http://127.0.0.1:18091",
+        )
 
     def request(self, path, body=None, *, method=None, csrf=True, origin=True, authorization=None):
         headers = {}
@@ -179,7 +198,8 @@ class CentralManagementTests(unittest.TestCase):
         script = (Path(__file__).resolve().parents[1] / "management-web" / "assets" / "scripts" / "wishes-events.js").read_text(encoding="utf-8")
         self.assertIn("const eventsTimelineEtags = new Map()", script)
         self.assertIn("'If-None-Match': etag", script)
-        self.assertIn("if (resp.status === 304) return false", script)
+        self.assertIn("const cached = eventsTimelinePayloads.get(url);", script)
+        self.assertIn("if (!cached) { eventsTimelineEtags.delete(url); return fTimeline(); }", script)
 
     def test_ai_recent_access_indicator_uses_the_reader_access_window(self):
         script = (Path(__file__).resolve().parents[1] / "management-web" / "assets" / "scripts" / "wishes-events.js").read_text(encoding="utf-8")
@@ -363,6 +383,8 @@ class CentralManagementTests(unittest.TestCase):
     def test_mutations_require_origin_and_csrf(self):
         status, payload = self.request("/api/device-invitations", {}, csrf=False)
         self.assertEqual(status, 403); self.assertEqual(payload["error"], "csrf_rejected")
+        status, payload = self.request("/api/local-device-invitations", {}, csrf=False)
+        self.assertEqual(status, 403); self.assertEqual(payload["error"], "csrf_rejected")
         status, payload = self.request("/api/device-invitations", {})
         self.assertEqual(status, 201); self.assertTrue(payload["code"].startswith("LR1."))
 
@@ -375,6 +397,19 @@ class CentralManagementTests(unittest.TestCase):
 
         self.assertEqual(status, 409)
         self.assertEqual(payload["error"], "invitation_unavailable")
+
+    def test_local_invitation_needs_no_public_endpoint_and_uses_data_loopback(self):
+        current = json.loads(self.path.read_text(encoding="utf-8"))
+        current.pop("public_endpoint")
+        self.path.write_text(json.dumps(current), encoding="utf-8")
+
+        status, payload = self.request("/api/local-device-invitations", {})
+
+        self.assertEqual(status, 201)
+        self.assertTrue(payload["local_only"])
+        invitation = decode_invitation(payload["code"])
+        self.assertEqual(invitation["central_base_url"], data_local_url(self.config.port))
+        self.assertEqual(invitation["scope"], "dashboard")
 
     def test_ai_connection_package_downloads_central_zip_without_exposing_credentials(self):
         with mock.patch(
@@ -475,9 +510,15 @@ class CentralManagementTests(unittest.TestCase):
         self.assertIn('state.supported === false', devices_script)
         self.assertIn('仅支持 Windows', devices_script)
         self.assertNotIn('id="central-create-ai-package"', page)
+        self.assertIn('远程连接（可选）', page)
+        self.assertIn('本机测试可留空', page)
+        self.assertIn('id="central-create-local-invitation"', page)
+        self.assertIn('/api/local-device-invitations', management_script)
+        self.assertIn('仅能用于当前主机上的 PC 客户端', management_script)
         self.assertIn('/assets/scripts/central-management.js', page)
         self.assertIn('/assets/styles/central-management.css', page)
         management_css = (web_root / 'assets' / 'styles' / 'central-management.css').read_text(encoding='utf-8')
+        self.assertIn('#page-central-management { max-width: none; }', management_css)
         self.assertIn('#page-central-management > #sync-device-cards', management_css)
         self.assertIn('overflow-x: auto', management_css)
         self.assertIn('input[type="checkbox"]', management_css)

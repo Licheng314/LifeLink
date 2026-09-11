@@ -280,11 +280,6 @@ private fun EventListScreen(
     modifier: Modifier = Modifier
 ) {
     LaunchedEffect(Unit) { viewModel.refreshTimeline() }
-    val timelineGroups = groupTodayAndYesterdayTimelineEvents(
-        uiState.timelineEvents,
-        uiState.sharedDayStartHour,
-        Instant.now()
-    )
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -294,7 +289,7 @@ private fun EventListScreen(
             Row(verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("事件", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text("今天和昨天（按设置中的业务日）· 来自中央服务的事件记录",
+                    Text("当前业务日 · 来自中央服务的事件记录",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -306,26 +301,22 @@ private fun EventListScreen(
         if (uiState.timelineLoading) {
             item { Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp) } }
-        } else if (!timelineGroups.isEmpty) {
-            items(timelineGroups.today, key = { it.timelineEventId }) { event ->
-                TimelineEventCard(event, uiState.sharedDayStartHour)
-            }
-            if (timelineGroups.showDivider) {
-                item {
-                    Divider(
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant
-                    )
-                }
-            }
-            items(timelineGroups.yesterday, key = { it.timelineEventId }) { event ->
+        } else if (uiState.timelineEvents.isNotEmpty()) {
+            items(uiState.timelineEvents, key = { it.timelineEventId }) { event ->
                 TimelineEventCard(event, uiState.sharedDayStartHour)
             }
         } else {
-            item { EmptyEventCard("今天和昨天没有事件", "新事件会在同步后出现在这里") }
+            item { EmptyEventCard("当前业务日没有事件", "新事件会在同步后出现在这里") }
         }
         if (uiState.timelineCacheOnly) {
-            item { Text("当前离线中（只读缓存）", style = MaterialTheme.typography.labelSmall, color = Warning) }
+            item {
+                Text(
+                    if (uiState.timelineError.isBlank()) "当前无法读取中央时间线（只读缓存）"
+                    else "当前无法读取中央时间线：${uiState.timelineError}（只读缓存）",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Warning
+                )
+            }
         }
     }
 }
@@ -1640,12 +1631,13 @@ private fun LocationStatusCard(
     val status = when {
         !uiState.locationPermissionGranted -> "等待位置权限"
         !uiState.locationTrackingEnabled -> "已关闭"
+        uiState.locationStale -> "定位停滞"
         uiState.locationServiceRunning -> "采集中"
         else -> "正在启动"
     }
     val statusColor = when (status) {
         "采集中" -> Success
-        "正在启动" -> Warning
+        "正在启动", "定位停滞" -> Warning
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     val locationText = uiState.lastLocation?.place?.displayLabel
@@ -1700,6 +1692,22 @@ private fun LocationStatusCard(
             Text("最新位置：$locationText", style = MaterialTheme.typography.bodySmall)
             Text("最近更新：$lastDetectedText", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (uiState.locationTrackingEnabled && !uiState.fineLocationPermissionGranted) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "当前仅允许近似位置，系统可能降低定位更新频率。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Warning
+                )
+            }
+            if (uiState.locationDiagnostic.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "采集诊断：${uiState.locationDiagnostic}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (uiState.locationStale) Warning else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             uiState.lastLocation?.place?.let { place ->
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(
@@ -2205,7 +2213,15 @@ private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Mo
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 if (uiState.centralTokenConfigured && !showRebind) {
-                    OutlinedButton(onClick = { showRebind = true }) { Text("重新绑定") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { viewModel.openCentralWebUi() },
+                            enabled = !uiState.webUiOpening
+                        ) {
+                            Text(if (uiState.webUiOpening) "正在打开…" else "打开 WebUI")
+                        }
+                        OutlinedButton(onClick = { showRebind = true }) { Text("重新绑定") }
+                    }
                 } else {
                     OutlinedTextField(
                         value = invitationText,
@@ -2254,6 +2270,10 @@ private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Mo
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+                if (uiState.webUiError.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(uiState.webUiError, style = MaterialTheme.typography.bodySmall, color = Danger)
                 }
             }
         }
@@ -2331,7 +2351,8 @@ private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Mo
 
         item {
             val usageNeedsAttention = !uiState.usageStatsPermissionGranted
-            val locationNeedsAttention = !uiState.locationTrackingEnabled || !uiState.locationPermissionGranted
+            val locationNeedsAttention = !uiState.locationTrackingEnabled ||
+                !uiState.locationPermissionGranted || uiState.locationStale
             SettingsExpandableCard(
                 title = "采集与权限",
                 summary = when {
@@ -2382,7 +2403,9 @@ private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Mo
                                 Text("位置采集", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                             }
                             Text(
-                                if (uiState.locationPermissionGranted) {
+                                if (uiState.locationStale) {
+                                    "超过 15 分钟未收到有效定位，应用会自动重新请求。"
+                                } else if (uiState.locationPermissionGranted) {
                                     "已获得位置权限。采集频率会根据活动状态自动调整。"
                                 } else {
                                     "开启后需要授予位置权限。"

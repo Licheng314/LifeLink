@@ -1,0 +1,21 @@
+services:
+  # This is deliberately an opt-in Compose overlay.  The base compose file
+  # remains useful for private local/Docker testing and never opens 80/443.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      LIFE_LINK_PUBLIC_DOMAIN: ${LIFE_LINK_PUBLIC_DOMAIN:?set LIFE_LINK_PUBLIC_DOMAIN in .env before starting public HTTPS}
+    depends_on:
+      - central
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - lifelink-caddy-data:/data
+      - lifelink-caddy-config:/config
+
+volumes:
+  lifelink-caddy-data:
+  lifelink-caddy-config:

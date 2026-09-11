@@ -24,8 +24,8 @@
     "central_base_url": {
       "type": "string",
       "format": "uri",
-      "pattern": "^https://[^\\s?#]+(?:/[^\\s?#]*)?$",
-      "description": "Absolute HTTPS base URL. Query strings and fragments are forbidden."
+      "pattern": "^(?:https://[^\\s?#]+|http://127\\.0\\.0\\.1(?::[0-9]{1,5})?)/?$",
+      "description": "Absolute HTTPS base URL, or exact host-loopback HTTP for a local desktop invitation. Query strings and fragments are forbidden."
     },
     "invitation_token": {
       "type": "string",

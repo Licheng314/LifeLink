@@ -2214,6 +2214,20 @@ def _valid_v17_payload(path: str, payload: Any) -> bool:
         return isinstance(payload.get("trigger_types"), list)
     if plain_path == "/v1/event-triggers":
         return isinstance(payload.get("triggers"), list)
+    if plain_path == "/v1/time-intervals":
+        return (
+            isinstance(payload.get("intervals"), list)
+            and isinstance(payload.get("state"), dict)
+            and all(
+                isinstance(item, dict)
+                and isinstance(item.get("interval_id"), str)
+                and isinstance(item.get("name"), str)
+                and isinstance(item.get("start_local_time"), str)
+                and isinstance(item.get("end_local_time"), str)
+                and isinstance(item.get("color"), str)
+                for item in payload["intervals"]
+            )
+        )
     if plain_path == "/v1/event-background":
         summary = payload.get("background_summary")
         guide = payload.get("ai_understanding")
@@ -3259,6 +3273,8 @@ class SyncHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/timeline-events":
             qs = parsed.query or ""
             self._proxy_central_get(f"/v1/timeline-events?{qs}" if qs else "/v1/timeline-events")
+        elif parsed.path == "/api/time-intervals":
+            self._proxy_central_get("/v1/time-intervals")
         elif parsed.path == "/api/ai-readers":
             if self.client_address[0] not in {"127.0.0.1", "::1"}:
                 self.send_json(403, {"error": "AI reader status is local-only"})

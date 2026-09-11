@@ -13,6 +13,8 @@ venv/
 *.tmp
 *.bak
 central-server/config.json
+central-server/.env
+central-server/.migration-staging/
 pc-dashboard/config.json
 central-server/*.sqlite3
 central-server/*.sqlite3-*

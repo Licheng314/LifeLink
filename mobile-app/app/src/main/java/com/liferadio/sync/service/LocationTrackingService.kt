@@ -12,17 +12,22 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.liferadio.sync.LifeRadioApp
 import com.liferadio.sync.MainActivity
 import com.liferadio.sync.R
@@ -32,8 +37,11 @@ import com.liferadio.sync.data.local.MotionWindowSnapshot
 import com.liferadio.sync.data.local.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.math.abs
@@ -44,10 +52,15 @@ class LocationTrackingService : Service(), SensorEventListener {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private lateinit var locationManager: LocationManager
     private lateinit var settings: SettingsStore
     private lateinit var collector: LocationEventCollector
     private lateinit var sensorManager: SensorManager
     private var locationUpdatesRequested = false
+    private var locationWatchdog: Job? = null
+    private var lastRecoveryAttemptAt = 0L
+    private var nativeFallbackRequested = false
+    @Volatile private var immediateRequestInFlight = false
     private var motionMonitoringStarted = false
     private var accelerometerAvailable = false
     private var motionWindowStartedAt = 0L
@@ -61,6 +74,19 @@ class LocationTrackingService : Service(), SensorEventListener {
         override fun onLocationResult(result: LocationResult) {
             handleLocations(result.locations)
         }
+
+        override fun onLocationAvailability(availability: LocationAvailability) {
+            val message = if (availability.isLocationAvailable) {
+                "系统定位源可用，等待有效定位"
+            } else {
+                "系统定位源暂不可用，正在等待恢复"
+            }
+            recordDiagnostic(message)
+        }
+    }
+
+    private val nativeLocationListener = LocationListener { location ->
+        handleLocations(listOf(location))
     }
 
     override fun onCreate() {
@@ -68,6 +94,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         settings = SettingsStore(this)
         collector = LocationEventCollector(this, AppDatabase.getInstance(this), settings)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+        locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
     }
 
@@ -89,26 +116,41 @@ class LocationTrackingService : Service(), SensorEventListener {
         settings.isLocationTrackingEnabled = true
         isRunning = true
         startForeground(NOTIFICATION_ID, createNotification("正在检测位置"))
+        recordDiagnostic("定位服务已启动，等待首次有效定位")
         startMotionMonitoring()
         serviceScope.launch { collector.flushActiveCluster() }
         requestLocationUpdates()
+        startLocationWatchdog()
+        scheduleInitialRecoveryIfStale()
         return START_STICKY
     }
 
     private fun handleLocations(locations: List<Location>) {
         val receivedAt = System.currentTimeMillis()
+        var rejectionReason: String? = null
         val acceptedLocations = locations
             .asSequence()
-            .filter { location -> isAcceptableLocation(location, receivedAt) }
+            .filter { location ->
+                val reason = unacceptableLocationReason(location, receivedAt)
+                if (reason != null) {
+                    rejectionReason = reason
+                    false
+                } else {
+                    true
+                }
+            }
             .distinctBy { location ->
                 "${location.time / 1000L}|${location.latitude}|${location.longitude}|${location.provider}"
             }
             .sortedBy { location -> location.time }
             .toList()
         if (acceptedLocations.isEmpty()) {
+            recordDiagnostic(rejectionReason ?: "定位回调未包含有效数据")
             return
         }
 
+        stopNativeLocationFallback()
+        recordDiagnostic("已收到有效定位")
         val motionWindow = finishMotionWindow(receivedAt)
         serviceScope.launch {
             acceptedLocations.forEachIndexed { index, location ->
@@ -136,12 +178,19 @@ class LocationTrackingService : Service(), SensorEventListener {
         }
     }
 
-    private fun isAcceptableLocation(location: Location, receivedAt: Long): Boolean {
-        if (location.accuracy > MAX_ACCEPTED_ACCURACY_METERS || location.time <= 0L) {
-            return false
+    private fun unacceptableLocationReason(location: Location, receivedAt: Long): String? {
+        if (location.accuracy > MAX_ACCEPTED_ACCURACY_METERS) {
+            return "定位精度过低（约 ${location.accuracy.toInt()} 米）"
+        }
+        if (location.time <= 0L) {
+            return "定位结果缺少有效时间"
         }
         val ageMillis = receivedAt - location.time
-        return ageMillis in -MAX_FUTURE_LOCATION_OFFSET_MILLIS..MAX_LOCATION_AGE_MILLIS
+        return if (ageMillis !in -MAX_FUTURE_LOCATION_OFFSET_MILLIS..MAX_LOCATION_AGE_MILLIS) {
+            "定位结果时间过期"
+        } else {
+            null
+        }
     }
 
     private fun startMotionMonitoring() {
@@ -202,7 +251,7 @@ class LocationTrackingService : Service(), SensorEventListener {
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
 
-    private fun requestLocationUpdates() {
+    private fun requestLocationUpdates(recordRegistration: Boolean = true) {
         if (!settings.isLocationTrackingEnabled || !hasLocationPermission()) {
             return
         }
@@ -214,14 +263,151 @@ class LocationTrackingService : Service(), SensorEventListener {
                 .setMinUpdateIntervalMillis(COLLECTION_INTERVAL_MILLIS)
                 .setMaxUpdateDelayMillis(0L)
                 .setMaxUpdateAgeMillis(0L)
-                .setWaitForAccurateLocation(true)
+                .setWaitForAccurateLocation(false)
                 .build()
             fusedLocationClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
-            locationUpdatesRequested = true
+                .addOnSuccessListener {
+                    locationUpdatesRequested = true
+                    if (recordRegistration) {
+                        recordDiagnostic("定位请求已注册，等待系统回调")
+                    }
+                }
+                .addOnFailureListener { error ->
+                    locationUpdatesRequested = false
+                    recordDiagnostic("定位请求失败：${error.javaClass.simpleName}")
+                    updateNotification("定位请求失败，请检查系统定位")
+                }
         } catch (_: SecurityException) {
+            recordDiagnostic("位置权限不可用")
             settings.isLocationTrackingEnabled = false
             stopTracking(flush = true)
         }
+    }
+
+    private fun startLocationWatchdog() {
+        locationWatchdog?.cancel()
+        locationWatchdog = serviceScope.launch {
+            while (isActive) {
+                delay(WATCHDOG_INTERVAL_MILLIS)
+                val now = System.currentTimeMillis()
+                if (
+                    LocationTrackingHealthPolicy.isStale(
+                        enabled = settings.isLocationTrackingEnabled,
+                        lastAcceptedAt = settings.lastLocationDetectedAt,
+                        now = now
+                    ) && now - lastRecoveryAttemptAt >= RECOVERY_MIN_INTERVAL_MILLIS
+                ) {
+                    recoverLocationRequest(now)
+                }
+            }
+        }
+    }
+
+    private fun scheduleInitialRecoveryIfStale() {
+        serviceScope.launch {
+            delay(INITIAL_RECOVERY_DELAY_MILLIS)
+            val now = System.currentTimeMillis()
+            if (
+                LocationTrackingHealthPolicy.isStale(
+                    enabled = settings.isLocationTrackingEnabled,
+                    lastAcceptedAt = settings.lastLocationDetectedAt,
+                    now = now
+                ) && now - lastRecoveryAttemptAt >= RECOVERY_MIN_INTERVAL_MILLIS
+            ) {
+                recoverLocationRequest(now)
+            }
+        }
+    }
+
+    private fun recoverLocationRequest(now: Long) {
+        lastRecoveryAttemptAt = now
+        recordDiagnostic("超过 15 分钟未收到有效定位，正在重新请求")
+        updateNotification("定位停滞，正在重新请求")
+        locationUpdatesRequested = false
+        fusedLocationClient.removeLocationUpdates(locationCallback).addOnCompleteListener {
+            requestLocationUpdates(recordRegistration = false)
+            requestImmediateLocation()
+        }
+        requestNativeLocationFallback()
+    }
+
+    private fun requestImmediateLocation() {
+        if (!settings.isLocationTrackingEnabled || !hasLocationPermission()) {
+            return
+        }
+        try {
+            val requestedAt = System.currentTimeMillis()
+            immediateRequestInFlight = true
+            val cancellation = CancellationTokenSource()
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellation.token)
+                .addOnSuccessListener { location ->
+                    immediateRequestInFlight = false
+                    if (location == null) {
+                        recordDiagnostic("系统没有返回即时定位，请检查系统位置服务与后台限制")
+                    } else {
+                        handleLocations(listOf(location))
+                    }
+                }
+                .addOnFailureListener { error ->
+                    immediateRequestInFlight = false
+                    recordDiagnostic("即时定位失败：${error.javaClass.simpleName}")
+                }
+            serviceScope.launch {
+                delay(IMMEDIATE_LOCATION_TIMEOUT_MILLIS)
+                if (immediateRequestInFlight && settings.lastLocationDetectedAt < requestedAt) {
+                    immediateRequestInFlight = false
+                    cancellation.cancel()
+                    recordDiagnostic("即时定位等待超时，系统定位备用通道仍在监听")
+                }
+            }
+        } catch (_: SecurityException) {
+            immediateRequestInFlight = false
+            recordDiagnostic("即时定位缺少可用权限")
+        }
+    }
+
+    private fun requestNativeLocationFallback() {
+        if (nativeFallbackRequested || !settings.isLocationTrackingEnabled || !hasLocationPermission()) {
+            return
+        }
+        val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            .filter { provider -> runCatching { locationManager.isProviderEnabled(provider) }.getOrDefault(false) }
+        if (providers.isEmpty()) {
+            recordDiagnostic("系统定位总开关未开启，或没有可用的定位源")
+            return
+        }
+        var registered = 0
+        providers.forEach { provider ->
+            try {
+                locationManager.requestLocationUpdates(
+                    provider,
+                    COLLECTION_INTERVAL_MILLIS,
+                    0f,
+                    nativeLocationListener,
+                    Looper.getMainLooper()
+                )
+                registered++
+            } catch (_: SecurityException) {
+                recordDiagnostic("系统定位备用通道缺少可用权限")
+            } catch (error: IllegalArgumentException) {
+                Log.w(TAG, "Native location provider unavailable: $provider", error)
+            }
+        }
+        nativeFallbackRequested = registered > 0
+        if (nativeFallbackRequested) {
+            recordDiagnostic("融合定位无回调，已启用系统定位备用通道")
+        }
+    }
+
+    private fun stopNativeLocationFallback() {
+        if (!nativeFallbackRequested) return
+        locationManager.removeUpdates(nativeLocationListener)
+        nativeFallbackRequested = false
+    }
+
+    private fun recordDiagnostic(message: String) {
+        Log.i(TAG, message)
+        settings.recordLocationDiagnostic(message)
     }
 
     private fun hasLocationPermission(): Boolean =
@@ -229,6 +415,8 @@ class LocationTrackingService : Service(), SensorEventListener {
             ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     private fun stopTracking(flush: Boolean) {
+        locationWatchdog?.cancel()
+        locationWatchdog = null
         removeLocationUpdates()
         stopMotionMonitoring()
         isRunning = false
@@ -240,6 +428,8 @@ class LocationTrackingService : Service(), SensorEventListener {
     }
 
     override fun onDestroy() {
+        locationWatchdog?.cancel()
+        locationWatchdog = null
         removeLocationUpdates()
         stopMotionMonitoring()
         isRunning = false
@@ -252,6 +442,7 @@ class LocationTrackingService : Service(), SensorEventListener {
             fusedLocationClient.removeLocationUpdates(locationCallback)
             locationUpdatesRequested = false
         }
+        stopNativeLocationFallback()
     }
 
     private fun stopMotionMonitoring() {
@@ -292,9 +483,14 @@ class LocationTrackingService : Service(), SensorEventListener {
         private const val COLLECTION_INTERVAL_MILLIS = 5 * 60 * 1000L
         private const val MAX_LOCATION_AGE_MILLIS = 10 * 60 * 1000L
         private const val MAX_FUTURE_LOCATION_OFFSET_MILLIS = 2 * 60 * 1000L
+        private const val WATCHDOG_INTERVAL_MILLIS = 60 * 1000L
+        private const val INITIAL_RECOVERY_DELAY_MILLIS = 5 * 1000L
+        private const val RECOVERY_MIN_INTERVAL_MILLIS = 15 * 60 * 1000L
+        private const val IMMEDIATE_LOCATION_TIMEOUT_MILLIS = 30 * 1000L
         private const val MOTION_TRIGGER_THRESHOLD_METERS_PER_SECOND_SQUARED = 0.7f
         private const val MOTION_TRIGGER_RESET_THRESHOLD_METERS_PER_SECOND_SQUARED = 0.4f
         private const val GRAVITY_FILTER_ALPHA = 0.9f
+        private const val TAG = "LifeLinkLocation"
 
         @Volatile
         var isRunning: Boolean = false

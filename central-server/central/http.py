@@ -390,6 +390,9 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
         if path == "/v1/settings/shared":
             self._handle_shared_settings_update()
             return
+        if path.startswith("/v1/time-intervals/"):
+            self._handle_time_interval_update(path)
+            return
         if path.startswith("/v1/settings/blacklist-rules/"):
             self._handle_blacklist_rules_update(path)
             return
@@ -411,6 +414,9 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/v1/settings/blacklist-rules/"):
             self._handle_blacklist_rules_delete(path)
+            return
+        if path.startswith("/v1/time-intervals/"):
+            self._handle_time_interval_delete(path)
             return
         if path.startswith("/v1/wishes/"):
             self._handle_wish_delete(path)
@@ -484,6 +490,9 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/v1/settings/shared":
             self._handle_shared_settings_get()
+            return
+        if parsed.path == "/v1/time-intervals":
+            self._handle_time_intervals_get()
             return
         if parsed.path == "/v1/event-background":
             self._handle_event_background(parse_qs(parsed.query))
@@ -725,6 +734,12 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             # Some deployed HTTPS tunnels reject PATCH even though the central
             # service supports it. POST is the transport-compatible write path.
             self._handle_shared_settings_update()
+            return
+        if path == "/v1/time-intervals":
+            self._handle_time_interval_create()
+            return
+        if path.startswith("/v1/time-intervals/"):
+            self._handle_time_interval_update(path)
             return
         if path == "/v1/enrollments/claim":
             self._handle_enrollment_claim()
@@ -1476,6 +1491,59 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             self.send_json(200, self.server.store.update_shared_settings(payload))
         except ValueError as error:
             self.send_json(400, {"error": "invalid_shared_setting", "message": str(error)})
+
+    def _handle_time_intervals_get(self) -> None:
+        if not self._authorize_read():
+            return
+        self.send_json(200, {"intervals": self.server.store.list_time_intervals(), "state": self.server.store.time_interval_state()})
+
+    def _handle_time_interval_create(self) -> None:
+        if not self._authorize_registered_device():
+            return
+        payload, error = self.read_json_body()
+        if error or not isinstance(payload, dict):
+            self.send_json(400, {"error": "invalid_request", "message": error or "request body must be a JSON object"})
+            return
+        try:
+            self.send_json(201, self.server.store.create_time_interval(payload))
+        except ValueError as exc:
+            self.send_json(409 if "overlap" in str(exc) else 400, {"error": "invalid_time_interval", "message": str(exc)})
+
+    def _time_interval_id(self, path: str) -> str | None:
+        value = path.removeprefix("/v1/time-intervals/")
+        return value if value and "/" not in value else None
+
+    def _handle_time_interval_update(self, path: str) -> None:
+        if not self._authorize_registered_device():
+            return
+        interval_id = self._time_interval_id(path)
+        payload, error = self.read_json_body()
+        if interval_id is None or error or not isinstance(payload, dict):
+            self.send_json(400, {"error": "invalid_request", "message": error or "invalid time interval request"})
+            return
+        try:
+            updated = self.server.store.update_time_interval(interval_id, payload)
+        except ValueError as exc:
+            self.send_json(409 if "overlap" in str(exc) else 400, {"error": "invalid_time_interval", "message": str(exc)})
+            return
+        if updated is None:
+            self.send_json(404, {"error": "time_interval_not_found"})
+            return
+        self.send_json(200, updated)
+
+    def _handle_time_interval_delete(self, path: str) -> None:
+        if not self._authorize_registered_device():
+            return
+        interval_id = self._time_interval_id(path)
+        if interval_id is None:
+            self.send_json(404, {"error": "not_found"})
+            return
+        if not self.server.store.delete_time_interval(interval_id):
+            self.send_json(404, {"error": "time_interval_not_found"})
+            return
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _handle_blacklist_rules_get(self) -> None:
         # Accept read token or any registered device credential.
