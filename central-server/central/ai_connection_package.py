@@ -14,9 +14,26 @@ from typing import Any
 
 
 PACKAGE_SCHEMA = "life-link-ai-mcp-connection-package/v1"
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-MCP_SCRIPT = PROJECT_ROOT / "life-link-mcp" / "life_link_mcp.py"
-SKILL_FILE = PROJECT_ROOT / ".codex" / "skills" / "life-link-ai-reader" / "SKILL.md"
+CENTRAL_SERVER_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_REPOSITORY_ROOT = CENTRAL_SERVER_ROOT.parent
+
+# A source checkout keeps these two files at repository level. The Docker
+# image deliberately carries immutable copies under ``connection-package`` so
+# generating a package never depends on files omitted from its build context.
+# Prefer deployed assets when present; source mode remains convenient for
+# Windows development and automated tests.
+DEPLOYED_ASSET_ROOT = CENTRAL_SERVER_ROOT / "connection-package"
+
+
+def _asset_path(deployed_relative: str, source_relative: str) -> Path:
+    deployed = DEPLOYED_ASSET_ROOT / deployed_relative
+    if deployed.is_file():
+        return deployed
+    return SOURCE_REPOSITORY_ROOT / source_relative
+
+
+MCP_SCRIPT = _asset_path("life_link_mcp.py", "life-link-mcp/life_link_mcp.py")
+SKILL_FILE = _asset_path("life-link-ai-reader/SKILL.md", ".codex/skills/life-link-ai-reader/SKILL.md")
 
 
 @dataclass(frozen=True)

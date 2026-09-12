@@ -79,7 +79,7 @@
 
 ### Linux / Docker（服务器部署）
 
-`Dockerfile` 与 `compose.yaml` 提供的是无桌面中央服务部署：容器使用 Python 3.13、标准库和 `tzdata`，以非 root 用户运行，SQLite 配置和数据库保存在具名持久卷 `lifelink-central-data`。镜像不包含任何真实配置、设备凭据或历史数据。
+`Dockerfile` 与 `compose.yaml` 提供的是无桌面中央服务部署：容器使用 Python 3.13、标准库和 `tzdata`，以非 root 用户运行，SQLite 配置和数据库保存在具名持久卷 `lifelink-central-data`。镜像不包含任何真实配置、设备凭据或历史数据；但会显式带入仓库版本化的 MCP 程序和 AI Reader 指引，因此无论 Windows 源码、Linux 还是 Docker，WebUI 生成的 AI 配对 ZIP 都包含相同的完整运行材料。
 
 在 Linux 服务器的 `central-server/` 目录执行：
 

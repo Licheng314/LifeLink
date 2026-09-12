@@ -1,0 +1,32 @@
+# Keep the repository-root Docker build context small and free of local data.
+.git/
+.agents/
+.workbuddy/
+assets/
+build/
+development/
+marketing/
+mobile-app/
+pc-dashboard/
+skills/
+skills-lock.json
+
+# The connection package needs exactly this versioned Skill, not local Codex
+# caches or unrelated skills.
+.codex/*
+!.codex/skills/
+.codex/skills/*
+!.codex/skills/life-link-ai-reader/
+!.codex/skills/life-link-ai-reader/SKILL.md
+
+**/__pycache__/
+**/.pytest_cache/
+**/*.py[cod]
+**/*.sqlite3
+**/*.sqlite3-*
+central-server/config.json
+central-server/runtime/
+central-server/LifeLink Central Service.exe
+central-server/tests/
+life-link-mcp/build/
+life-link-mcp/dist/

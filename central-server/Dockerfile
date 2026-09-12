@@ -17,10 +17,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     LIFE_LINK_CONTAINER_MANAGEMENT=1 \
     LIFE_LINK_MANAGEMENT_HOST=0.0.0.0
 
-COPY --chown=lifelink:lifelink central/ ./central/
-COPY --chown=lifelink:lifelink management-web/ ./management-web/
-COPY --chown=lifelink:lifelink central_server.py central_windows_startup.py central_endpoint.py configure_tailscale_endpoint.py ./
-COPY --chown=lifelink:lifelink docker-entrypoint.sh ./
+# The Compose build context is the repository root. Keep the AI connection
+# package inputs inside the image so Docker deployments can generate the same
+# portable ZIP as a Windows source checkout.
+COPY --chown=lifelink:lifelink central-server/central/ ./central/
+COPY --chown=lifelink:lifelink central-server/management-web/ ./management-web/
+COPY --chown=lifelink:lifelink central-server/central_server.py central-server/central_windows_startup.py central-server/central_endpoint.py central-server/configure_tailscale_endpoint.py ./
+COPY --chown=lifelink:lifelink life-link-mcp/life_link_mcp.py ./connection-package/life_link_mcp.py
+COPY --chown=lifelink:lifelink .codex/skills/life-link-ai-reader/SKILL.md ./connection-package/life-link-ai-reader/SKILL.md
+COPY --chown=lifelink:lifelink central-server/docker-entrypoint.sh ./docker-entrypoint.sh
 # Defend against CRLF from a Windows build context: otherwise Linux reads the
 # shebang interpreter as /bin/sh\r and reports the script as missing.
 RUN sed -i 's/\r$//' docker-entrypoint.sh \

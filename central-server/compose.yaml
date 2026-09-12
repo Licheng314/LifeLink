@@ -1,7 +1,10 @@
 services:
   central:
     build:
-      context: .
+      # Build from the repository root: the image also contains the versioned
+      # MCP program and AI-reader guidance used for downloaded connection ZIPs.
+      context: ..
+      dockerfile: central-server/Dockerfile
     image: lifelink-central:local
     restart: unless-stopped
     environment:

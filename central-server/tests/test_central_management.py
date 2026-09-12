@@ -14,6 +14,7 @@ from urllib.request import Request, build_opener, ProxyHandler
 from central.config import CentralConfig
 from central.http import create_server
 from central.ai_connection_package import ConnectionPackage, create_connection_package
+import central.ai_connection_package as ai_connection_package
 from central.invitations import decode_invitation
 from central.management import (
     create_management_server,
@@ -475,6 +476,29 @@ class CentralManagementTests(unittest.TestCase):
         self.assertEqual(config["mcpServers"]["life-link"]["command"], "<PYTHON_COMMAND>")
         self.assertIn("<LIFE_LINK_MCP_DIR>", readme)
         self.assertNotIn(pairing["pairing_token"], readme)
+
+    def test_connection_package_prefers_deployed_image_assets(self):
+        """Docker package generation must not rely on repository siblings."""
+        asset_root = Path(self.temp.name) / "connection-package"
+        skill_path = asset_root / "life-link-ai-reader" / "SKILL.md"
+        skill_path.parent.mkdir(parents=True)
+        script_path = asset_root / "life_link_mcp.py"
+        script_path.write_text("# deployed mcp\n", encoding="utf-8")
+        skill_path.write_text("# deployed skill\n", encoding="utf-8")
+
+        with mock.patch.object(ai_connection_package, "DEPLOYED_ASSET_ROOT", asset_root):
+            deployed_script = ai_connection_package._asset_path("life_link_mcp.py", "missing/source.py")
+            deployed_skill = ai_connection_package._asset_path("life-link-ai-reader/SKILL.md", "missing/skill.md")
+            with mock.patch.object(ai_connection_package, "MCP_SCRIPT", deployed_script), mock.patch.object(
+                ai_connection_package, "SKILL_FILE", deployed_skill,
+            ):
+                package = create_connection_package(
+                    store=self.data.store, external_origin="https://central.example.test",
+                )
+
+        with zipfile.ZipFile(io.BytesIO(package.payload)) as archive:
+            self.assertEqual(archive.read("life_link_mcp.py"), b"# deployed mcp\n")
+            self.assertEqual(archive.read("life-link-ai-reader/SKILL.md"), b"# deployed skill\n")
 
     def test_tailscale_detection_returns_candidate_without_saving(self):
         with mock.patch(
