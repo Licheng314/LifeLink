@@ -1137,6 +1137,9 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         path = urlparse(self.path).path
+        if path.startswith("/api/"):
+            self._proxy_web_api("PUT")
+            return
         if path.startswith("/v1/wishes/") and "/days/" in path:
             self._handle_wish_assessment(path); return
         self.send_json(405, {"error": "method_not_allowed", "message": "PUT not supported"})

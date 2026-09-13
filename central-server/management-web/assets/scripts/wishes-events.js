@@ -907,8 +907,12 @@ async function doAssess(wishId, date, ev) {
   try {
     const r = await fetch('/api/wishes/' + wishId + '/days/' + date, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ evaluation: ev }) });
     if (r.ok) { showToast(ev === 'completed' ? '已完成 ✓' : '未完成 ✗', 'ok'); await loadEventsTimeline().catch(() => {}); }
-    else showToast('评估失败', 'err');
-  } catch (e) { showToast('评估失败', 'err'); }
+    else {
+      const body = await r.json().catch(() => ({}));
+      const reason = body.error === 'future_wish_day' ? '未来日期暂不能评估' : (body.message || body.error || `HTTP ${r.status}`);
+      showToast(`评估失败：${reason}`, 'err');
+    }
+  } catch (e) { showToast(`评估失败：${e.message || '网络连接异常'}`, 'err'); }
 }
 
 // 创建心愿表单

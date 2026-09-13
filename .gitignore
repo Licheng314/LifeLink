@@ -8,6 +8,10 @@
 venv/
 .workbuddy/
 
+# Locally installed agent skills
+.agents/skills/
+skills-lock.json
+
 # Local logs and transient files
 *.log
 *.tmp
@@ -20,6 +24,7 @@ central-server/*.sqlite3
 central-server/*.sqlite3-*
 runtime/
 build/
+marketing/
 central-server/LifeLink Central Service.exe
 pc-dashboard/LifeLink PC Client.exe
 

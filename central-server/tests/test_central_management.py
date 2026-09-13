@@ -333,6 +333,50 @@ class CentralManagementTests(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 self.assertIn("day_start_hour", json.loads(response.read()))
 
+    def test_https_web_session_proxies_wish_day_put(self):
+        create_session = Request(
+            self.data_base + "/v1/web-sessions", data=b"{}",
+            headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.client.open(create_session) as response:
+            web_url = json.loads(response.read())["web_url"]
+        bootstrap = parse_qs(urlparse(web_url).fragment)["lifelink_bootstrap"][0]
+        claim = Request(
+            self.data_base + "/v1/web-sessions/claim",
+            data=json.dumps({"bootstrap_token": bootstrap}).encode(),
+            headers={"Origin": "https://old.example", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.client.open(claim) as response:
+            cookie = response.headers["Set-Cookie"].split(";", 1)[0]
+        with self.client.open(Request(self.data_base + "/", headers={"Cookie": cookie})) as response:
+            page = response.read().decode("utf-8")
+        csrf = page.split('meta name="lifelink-csrf" content="', 1)[1].split('"', 1)[0]
+
+        create_wish = Request(
+            self.data_base + "/api/wishes",
+            data=json.dumps({
+                "request_id": "aac726fb-f76c-4fe4-8701-52615cab07ad",
+                "text": "公网评估代理测试",
+                "duration_days": 3,
+                "ai_tracking_enabled": False,
+            }).encode(),
+            headers={"Cookie": cookie, "X-CSRF-Token": csrf, "Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.client.open(create_wish) as response:
+            wish = json.loads(response.read())
+        assessment = Request(
+            self.data_base + f"/api/wishes/{wish['wish_id']}/days/{wish['starts_on']}",
+            data=json.dumps({"evaluation": "completed"}).encode(),
+            headers={"Cookie": cookie, "X-CSRF-Token": csrf, "Content-Type": "application/json"},
+            method="PUT",
+        )
+        with self.client.open(assessment) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.loads(response.read())["evaluation"], "completed")
+
     def test_copied_dashboard_settings_write_keeps_csrf_boundary(self):
         status, payload = self.request("/api/settings", {"day_start_hour": 4}, csrf=False)
         self.assertEqual(status, 403)
