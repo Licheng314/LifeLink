@@ -2160,6 +2160,18 @@ private fun SettingsExpandableCard(
 
 @Composable
 private fun PhotosTab(uiState: UiState, viewModel: MainViewModel, modifier: Modifier = Modifier) {
+    val photoPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { viewModel.refreshPhotos(reset = true) }
+    val requestPhotoPermission = {
+        if (Build.VERSION.SDK_INT >= 34) {
+            photoPermissionLauncher.launch(arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES, android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED))
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            photoPermissionLauncher.launch(arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES))
+        } else {
+            photoPermissionLauncher.launch(arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE))
+        }
+    }
     val today = com.liferadio.sync.data.model.EventBusinessDay.at(uiState.sharedDayStartHour, Instant.now()).toString()
     val todayPhotos = uiState.photos.filter { it.photo.businessDate == today }
     val olderGroups = uiState.photos.filterNot { it.photo.businessDate == today }.groupBy { it.photo.businessDate }.toSortedMap(compareByDescending { it })
@@ -2173,9 +2185,34 @@ private fun PhotosTab(uiState: UiState, viewModel: MainViewModel, modifier: Modi
                 Text("照片", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text("仅浏览当前允许访问的图片；勾选是本机期望同步集。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.SELECTED) Text("当前为所选照片访问：可见范围可能不完整。", style = MaterialTheme.typography.bodySmall, color = Warning)
-                if (!uiState.photoSyncEnabled) Text("请先在设置中启用照片同步。", style = MaterialTheme.typography.bodyMedium, color = Warning)
-                if (uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.NONE && uiState.photoSyncEnabled) Text("需要照片权限后才能浏览。", style = MaterialTheme.typography.bodyMedium, color = Warning)
+                if (!uiState.photoSyncEnabled) {
+                    Text("启用后才会读取你允许访问的照片。", style = MaterialTheme.typography.bodyMedium, color = Warning)
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = {
+                        viewModel.setPhotoSyncEnabled(true)
+                        requestPhotoPermission()
+                    }) { Text("启用并选择照片权限") }
+                } else if (uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.NONE) {
+                    Text("允许访问后，照片会在本页显示。", style = MaterialTheme.typography.bodyMedium, color = Warning)
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = requestPhotoPermission) { Text("选择照片权限") }
+                }
+                if (uiState.photoLoadError.isNotBlank()) {
+                    Text(uiState.photoLoadError, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { viewModel.refreshPhotos(reset = true) }) { Text("重试") }
+                        OutlinedButton(onClick = requestPhotoPermission) { Text("重新选择权限") }
+                    }
+                }
                 if (uiState.photoSyncMessage.isNotBlank()) Text(uiState.photoSyncMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+            if (uiState.photosLoading && uiState.photos.isEmpty()) {
+                item {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+                    }
+                }
             }
             item {
                 Text("今日照片", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -2234,21 +2271,18 @@ private fun PhotoThumbnail(uri: Uri) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    context.contentResolver.loadThumbnail(uri, Size(256, 256), null)
+                    context.contentResolver.loadThumbnail(uri, Size(128, 128), null)
                 } else {
                     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
                     var sample = 1
-                    while (bounds.outWidth / sample > 256 || bounds.outHeight / sample > 256) sample *= 2
+                    while (bounds.outWidth / sample > 128 || bounds.outHeight / sample > 128) sample *= 2
                     context.contentResolver.openInputStream(uri)?.use {
                         BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
                     }
                 }
             }.getOrNull()
         }
-    }
-    DisposableEffect(bitmap) {
-        onDispose { bitmap?.recycle() }
     }
     Surface(
         modifier = Modifier.size(56.dp),

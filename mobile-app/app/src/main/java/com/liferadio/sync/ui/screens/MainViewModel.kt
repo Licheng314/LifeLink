@@ -45,6 +45,7 @@ import com.liferadio.sync.service.LocationTrackingHealthPolicy
 import com.liferadio.sync.service.CentralSyncCoordinator
 import com.liferadio.sync.service.CentralSyncLoopResult
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -170,6 +171,7 @@ data class UiState(
     ,val photos: List<PhotoDisplay> = emptyList()
     ,val photosHasMore: Boolean = false
     ,val photosLoading: Boolean = false
+    ,val photoLoadError: String = ""
     ,val photoChangesAdditions: Int = 0
     ,val photoChangesRemovals: Int = 0
     ,val photoSyncMessage: String = ""
@@ -657,19 +659,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshPhotos(reset: Boolean = true) {
         photoRefreshJob?.cancel()
         photoRefreshJob = viewModelScope.launch {
-            val scope = photoPermissionScope(getApplication())
-            _uiState.update { it.copy(photoPermissionScope = scope) }
-            if (!_uiState.value.photoSyncEnabled || scope == PhotoPermissionScope.NONE) {
-                _uiState.update { it.copy(photos = emptyList(), photosHasMore = false, photosLoading = false) }; return@launch
-            }
-            val offset = if (reset) 0 else _uiState.value.photos.size
-            _uiState.update { it.copy(photosLoading = true) }
-            val page = withContext(kotlinx.coroutines.Dispatchers.IO) { MediaStorePhotoReader(getApplication()).loadPage(_uiState.value.sharedDayStartHour, 60, offset) }
+            try {
+                val scope = photoPermissionScope(getApplication())
+                _uiState.update { it.copy(photoPermissionScope = scope) }
+                if (!_uiState.value.photoSyncEnabled || scope == PhotoPermissionScope.NONE) {
+                    _uiState.update { it.copy(photos = emptyList(), photosHasMore = false, photosLoading = false, photoLoadError = "") }; return@launch
+                }
+                val pageSize = 30
+                val offset = if (reset) 0 else _uiState.value.photos.size
+                _uiState.update { it.copy(photosLoading = true, photoLoadError = "") }
+                val loaded = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    MediaStorePhotoReader(getApplication()).loadPage(_uiState.value.sharedDayStartHour, pageSize + 1, offset)
+                }
+                val page = loaded.take(pageSize)
             // Central is authoritative for its own deletion state. An absent local MediaStore row is
             // never sent here and therefore cannot become a deletion request.
-            val client = centralPhotoClient ?: createPhotoClient()?.also { centralPhotoClient = it }
-            val remoteStates = mutableMapOf<String, String>()
-            if (client != null && settings.isCentralTokenConfigured) withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val client = centralPhotoClient ?: createPhotoClient()?.also { centralPhotoClient = it }
+                val remoteStates = mutableMapOf<String, String>()
+                if (client != null && settings.isCentralTokenConfigured) withContext(kotlinx.coroutines.Dispatchers.IO) {
                 var cursor: String? = null
                 do {
                     when (val remote = client.list(cursor)) {
@@ -687,10 +694,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         is PhotoRequestResult.Failure -> cursor = null
                     }
                 } while (cursor != null)
-            }
-            val dao = database.photoSyncSelectionDao()
-            val existing = if (page.isEmpty()) emptyMap() else dao.getByMediaStoreIds(page.map { it.mediaStoreId }).associateBy { it.mediaStoreId }
-            page.forEach { photo ->
+                }
+                val dao = database.photoSyncSelectionDao()
+                val existing = if (page.isEmpty()) emptyMap() else dao.getByMediaStoreIds(page.map { it.mediaStoreId }).associateBy { it.mediaStoreId }
+                page.forEach { photo ->
                 if (existing[photo.mediaStoreId] == null) {
                     val photoId = stablePhotoId(photo.mediaStoreId)
                     val remoteState = remoteStates[photoId]
@@ -707,13 +714,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
-            }
-            val selections = if (page.isEmpty()) emptyMap() else dao.getByMediaStoreIds(page.map { it.mediaStoreId }).associateBy { it.mediaStoreId }
-            val displays = page.map { PhotoDisplay(it, selections[it.mediaStoreId]) }
-            val allDiff = photoSelectionDiff(dao.getAll())
-            _uiState.update { state ->
-                val combined = if (reset) displays else (state.photos + displays).distinctBy { it.photo.mediaStoreId }
-                state.copy(photos = combined, photosHasMore = page.size == 60, photosLoading = false, photoChangesAdditions = allDiff.additions, photoChangesRemovals = allDiff.removals)
+                }
+                val selections = if (page.isEmpty()) emptyMap() else dao.getByMediaStoreIds(page.map { it.mediaStoreId }).associateBy { it.mediaStoreId }
+                val displays = page.map { PhotoDisplay(it, selections[it.mediaStoreId]) }
+                val allDiff = photoSelectionDiff(dao.getAll())
+                _uiState.update { state ->
+                    val combined = if (reset) displays else (state.photos + displays).distinctBy { it.photo.mediaStoreId }
+                    state.copy(photos = combined, photosHasMore = loaded.size > pageSize, photosLoading = false, photoLoadError = "", photoChangesAdditions = allDiff.additions, photoChangesRemovals = allDiff.removals)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                android.util.Log.e("LifeLinkPhotos", "Unable to read the authorized photo library", error)
+                _uiState.update {
+                    it.copy(
+                        photosLoading = false,
+                        photosHasMore = false,
+                        photoLoadError = "读取系统相册失败。请重试；若仍失败，可重新选择照片权限。"
+                    )
+                }
             }
         }
     }
