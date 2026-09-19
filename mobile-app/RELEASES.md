@@ -23,6 +23,8 @@ LifeLink-v<version>-debug.apk.sha256
 
 默认流程**不会**创建 Git tag、上传 GitHub 或修改对外 Release。构建完成后，应安装候选 APK 到真实手机，验收配对、后台运行、采集、同步和关键页面。
 
+只要候选 APK 会交付给用户安装或覆盖安装，即使尚不创建 GitHub Release，也必须先同时递增 `versionCode` 和 `versionName`。仅供开发机内部编译检查、不会交付安装的临时构建可以保持当前版本号。
+
 如需构建未签名 Release 仅供技术检查，可运行：
 
 ```powershell
