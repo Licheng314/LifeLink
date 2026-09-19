@@ -617,6 +617,27 @@ class CentralManagementTests(unittest.TestCase):
         self.assertIn('width: 16px', management_css)
         self.assertIn('.mcp-config-hint { margin: 0; color: var(--text);', management_css)
 
+    def test_photo_gallery_static_page_has_scoped_paging_and_confirmed_delete(self):
+        web_root = Path(__file__).resolve().parents[1] / "management-web"
+        page = (web_root / "index.html").read_text(encoding="utf-8")
+        script = (web_root / "assets" / "scripts" / "photos.js").read_text(encoding="utf-8")
+        stylesheet = (web_root / "assets" / "styles" / "photos.css").read_text(encoding="utf-8")
+        management = (Path(__file__).resolve().parents[1] / "central" / "management.py").read_text(encoding="utf-8")
+        self.assertIn('data-page="photos"', page)
+        self.assertIn('id="page-photos"', page)
+        self.assertIn('id="photos-show-current"', page)
+        self.assertIn('/assets/scripts/photos.js', page)
+        self.assertIn('/assets/styles/photos.css', page)
+        self.assertIn("current_business_date_only", script)
+        self.assertIn("next_cursor", script)
+        self.assertIn("loading = 'lazy'", script)
+        self.assertIn("source_device_id", script)
+        self.assertIn("window.confirm", script)
+        self.assertIn("手机相册原图不会被删除", script)
+        self.assertIn(".photo-grid", stylesheet)
+        self.assertIn("assets/scripts/photos.js", management)
+        self.assertIn("assets/styles/photos.css", management)
+
     def test_copied_dashboard_uses_local_vendored_runtime_assets(self):
         web_root = Path(__file__).resolve().parents[1] / "management-web"
         page = (web_root / "index.html").read_text(encoding="utf-8")

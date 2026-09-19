@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="/assets/styles/wishes-events.css?v=20260908-4">
 <link rel="stylesheet" href="/assets/styles/time-intervals.css?v=20260908-15">
 <link rel="stylesheet" href="/assets/styles/central-management.css">
+<link rel="stylesheet" href="/assets/styles/photos.css?v=20260918-1">
 <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
 </head>
 <body>
@@ -49,6 +50,9 @@
     </div>
     <div class="nav-item" data-page="health-info">
       <span class="icon"><i data-lucide="heart-pulse"></i></span><span>健康信息</span>
+    </div>
+    <div class="nav-item" data-page="photos">
+      <span class="icon"><i data-lucide="images"></i></span><span>照片图库</span>
     </div>
     <div class="sidebar-nav-bottom">
       <div class="nav-item" data-page="central-management">
@@ -282,6 +286,23 @@
     </section>
   </div>
 
+  <!-- ============ 照片图库 ============ -->
+  <div class="page" id="page-photos">
+    <div class="page-header photo-page-header">
+      <div><h2><i data-lucide="images"></i> 照片图库</h2><div class="desc">中央副本按业务日归档；删除不会影响手机相册原图</div></div>
+      <div class="photo-view-toggle" role="group" aria-label="照片范围">
+        <button type="button" id="photos-show-all" class="active" aria-pressed="true">全部日期</button>
+        <button type="button" id="photos-show-current" aria-pressed="false">仅当前业务日</button>
+      </div>
+    </div>
+    <div id="photos-status" class="photos-status" aria-live="polite">正在读取照片…</div>
+    <div id="photos-groups" class="photos-groups" aria-live="polite"></div>
+    <div id="photos-load-more-wrap" class="photos-load-more-wrap" hidden>
+      <button type="button" id="photos-load-more" class="photos-load-more">继续加载</button>
+    </div>
+    <div id="photos-load-sentinel" class="photos-load-sentinel" aria-hidden="true"></div>
+  </div>
+
 </div>
 
 <script src="/assets/scripts/wishes-events.js?v=20260908-5"></script>
@@ -290,6 +311,7 @@
 <script src="/assets/scripts/usage.js?v=20260906-1"></script>
 <script src="/assets/scripts/health-info.js?v=20260829-1"></script>
 <script src="/assets/scripts/devices.js?v=20260902-1"></script>
+<script src="/assets/scripts/photos.js?v=20260918-1"></script>
 <script src="/assets/vendor/leaflet/leaflet.js"></script>
 <script src="/assets/scripts/central-bridge.js"></script>
 <script src="/assets/scripts/location.js?v=20260829-4"></script>

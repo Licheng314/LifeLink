@@ -38,6 +38,7 @@ from .invitations import (
 )
 from .read_model import parse_read_range
 from .media import MediaManager, MediaSettings
+from .photos import PhotoStore, MAX_PHOTO_BYTES
 from .storage import (
     CentralStore,
     DeviceIdentityConflict,
@@ -80,6 +81,7 @@ class CentralHTTPServer(ThreadingMixIn, HTTPServer):
         self.store.reconcile_credentials(config.token_bindings)
         self.scheduler = MinuteScheduler(self.store)
         self.media = MediaManager(MediaSettings.from_config(config))
+        self.photos = PhotoStore(self.store)
         self.web_sessions = WebSessionManager()
         self.management_server: Any | None = None
         super().__init__(server_address, CentralRequestHandler)
@@ -374,6 +376,66 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             return
         self.send_json(200, {"status": "opened"})
 
+    def _photo_metadata(self) -> dict[str, Any]:
+        names = {"captured_at": "X-Photo-Captured-At", "time_source": "X-Photo-Time-Source", "mime_type": "X-Photo-Mime-Type", "width": "X-Photo-Width", "height": "X-Photo-Height", "byte_size": "X-Photo-Byte-Size", "sha256": "X-Photo-Sha256"}
+        result: dict[str, Any] = {}
+        for key, header in names.items():
+            value = self.headers.get(header)
+            if value is None: raise ValueError(f"{header} is required")
+            result[key] = int(value) if key in {"width", "height", "byte_size"} else value
+        return result
+
+    def _handle_photo_get(self, parsed) -> None:
+        device_id = self._authorize_device()
+        if device_id is None: return
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        try:
+            if set(params) - {"cursor", "limit", "include_deleted"}: raise ValueError("invalid photo query")
+            limit = int(params.get("limit", ["30"])[0]); cursor = params.get("cursor", [None])[0]
+            include_deleted = params.get("include_deleted", ["true"])[0] != "false"
+            self.send_json(200, self.server.photos.list(source_device_id=device_id, cursor=cursor, limit=limit, include_deleted=include_deleted))
+        except ValueError as error: self.send_json(400, {"error":"invalid_photo_query", "message":str(error)})
+
+    def _handle_photo_upload(self, path: str) -> None:
+        device_id = self._authorize_device()
+        match = re.fullmatch(r"/v1/photos/([0-9a-f-]{36})/content", path)
+        if device_id is None or match is None:
+            if match is None: self.send_json(404, {"error":"not_found"})
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "-1"))
+            if size < 1 or size > MAX_PHOTO_BYTES: raise ValueError("invalid or oversized Content-Length")
+            sync_id = self.headers.get("X-Photo-Sync-Id", "")
+            metadata = self._photo_metadata(); data = self.rfile.read(size)
+            content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if content_type != metadata["mime_type"]:
+                raise ValueError("Content-Type must match X-Photo-Mime-Type")
+            photo, changed = self.server.photos.upload(device_id, match.group(1), metadata, data, sync_id)
+            self.send_json(201 if changed else 200, {"photo":photo, "changed":changed})
+        except ValueError as error: self.send_json(400, {"error":"invalid_photo", "message":str(error)})
+        except sqlite3.Error: self.send_json(500, {"error":"storage_error", "message":"photo upload failed"})
+
+    def _handle_photo_delete(self, path: str) -> None:
+        device_id = self._authorize_device()
+        match = re.fullmatch(r"/v1/photos/([0-9a-f-]{36})", path)
+        if device_id is None or match is None:
+            if match is None: self.send_json(404, {"error":"not_found"})
+            return
+        try:
+            photo, changed = self.server.photos.delete(device_id, match.group(1), self.headers.get("X-Photo-Sync-Id", ""))
+            if photo is None: self.send_json(404, {"error":"photo_not_found"}); return
+            self.send_json(200, {"photo":photo, "changed":changed})
+        except ValueError as error: self.send_json(400, {"error":"invalid_photo", "message":str(error)})
+
+    def _handle_photo_complete(self) -> None:
+        device_id = self._authorize_device()
+        if device_id is None: return
+        payload, error = self.read_json_body()
+        if error or not isinstance(payload, dict) or set(payload) != {"sync_id"}:
+            self.send_json(400, {"error":"invalid_photo_sync", "message":error or "body must contain only sync_id"}); return
+        try: self.send_json(200, self.server.photos.complete(device_id, payload["sync_id"]))
+        except ValueError as exc: self.send_json(400, {"error":"invalid_photo_sync", "message":str(exc)})
+
     def do_PATCH(self) -> None:
         path = urlparse(self.path).path
         if path.startswith("/api/"):
@@ -409,6 +471,9 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/v1/ai-readers/"):
             self._handle_ai_reader_revoke(path)
+            return
+        if path.startswith("/v1/photos/"):
+            self._handle_photo_delete(path)
             return
         if path.startswith("/v1/devices/"):
             self._handle_device_retire(path)
@@ -488,6 +553,9 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/v1/media/jobs":
             self._handle_media_jobs_get()
+            return
+        if parsed.path == "/v1/photos":
+            self._handle_photo_get(parsed)
             return
         if parsed.path == "/v1/settings/blacklist-rules":
             self._handle_blacklist_rules_get()
@@ -699,6 +767,15 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/"):
             self._proxy_web_api("POST")
+            return
+        if path == "/v1/photos/sync-complete":
+            self._handle_photo_complete()
+            return
+        if path.startswith("/v1/photos/") and path.endswith("/delete"):
+            self._handle_photo_delete(path.removesuffix("/delete"))
+            return
+        if path.startswith("/v1/photos/") and path.endswith("/content"):
+            self._handle_photo_upload(path)
             return
         if path == "/v1/ai-readers/pairings/claim":
             self._handle_ai_reader_claim()

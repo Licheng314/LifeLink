@@ -1,0 +1,28 @@
+{
+  "sync_id": "0f4f6f7d-1f83-4b2d-a44e-221f9eff6671",
+  "upload": {
+    "photo_id": "a7d018b0-1bdd-4a98-8b21-a68b6f5343f9",
+    "headers": {
+      "X-Photo-Sync-Id": "0f4f6f7d-1f83-4b2d-a44e-221f9eff6671",
+      "X-Photo-Captured-At": "2026-09-18T02:15:30Z",
+      "X-Photo-Time-Source": "captured",
+      "X-Photo-Mime-Type": "image/png",
+      "X-Photo-Width": "1080",
+      "X-Photo-Height": "1920",
+      "X-Photo-Byte-Size": "<binary content length>",
+      "X-Photo-Sha256": "<lowercase sha256 of binary content>"
+    }
+  },
+  "complete_response": {
+    "sync_id": "0f4f6f7d-1f83-4b2d-a44e-221f9eff6671",
+    "added_count": 1,
+    "current_business_date_added_count": 1,
+    "removed_count": 0,
+    "business_date": "2026-09-18",
+    "timeline_event_id": "<central-generated UUID>"
+  },
+  "notes": [
+    "The fixture deliberately contains no image binary, token, URL or real hash.",
+    "A retry of sync-complete with this sync_id returns the same summary and creates no second timeline event."
+  ]
+}

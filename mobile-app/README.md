@@ -11,6 +11,7 @@ Android 模块只负责手机本机的权限、事实采集、Room 待上传队�
 - 只有中央逐事件确认的 revision 才标记送达，重复扫描和重试必须保持幂等。
 - 共享跨日设置从中央读取并只读缓存；手机同步间隔仍是本机参数。
 - 心愿、每日评估、到期后手动完结、时间线和心愿内提醒挂接使用中央资源；用户不能在手机端创造新的触发器类型。
+- 照片页只在取得系统照片权限后浏览当前可访问的历史照片，按 Life Link 业务日分组。勾选表示本设备期望同步集合，只有用户确认底部的新增/移除变化才写入中央；权限收窄或照片暂时不可见不会被解释为删除。中央删除只令同步状态失效，不修改手机原图，用户可再次明确勾选后重新同步。
 - 事件背景摘要、AI 理解说明、报告投送状态和系统里程碑均由中央生成；Android 只读展示，时间线固定按 `Asia/Shanghai` 格式化。事件列表只请求并展示当前业务日，避免超出中央单次查询上限；离线缓存明确只读，不能成为共享设置权威。
 - 已绑定设备可从“设置 → 中央服务”创建一次性 HTTPS WebUI 会话并交给浏览器打开；浏览器不接触设备长期凭据。此入口要求中央已验证公网 HTTPS 地址，未配置时显示失败原因。
 - 客户端只上传本机事实，不重新引入 ActivityWatch 依赖、Tailscale、P2P 发现或 PC 转发。
@@ -19,7 +20,7 @@ Android 模块只负责手机本机的权限、事实采集、Room 待上传队�
 
 ## 源码入口
 
-- `app/src/main/java/com/liferadio/sync/data/`：Room、模型、中央客户端和本机设置。
+- `app/src/main/java/com/liferadio/sync/data/`：Room、模型、MediaStore 照片目录、中央客户端和本机设置。
 - `app/src/main/java/com/liferadio/sync/service/`：采集与后台同步服务。
 - `app/src/main/java/com/liferadio/sync/ui/`：Compose 页面和 ViewModel。
 - `app/src/test/`：JVM 专项测试。

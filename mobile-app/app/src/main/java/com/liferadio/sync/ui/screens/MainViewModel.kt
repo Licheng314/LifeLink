@@ -23,6 +23,16 @@ import com.liferadio.sync.data.remote.CentralSharedSettings
 import com.liferadio.sync.data.remote.CentralSharedSettingsValidator
 import com.liferadio.sync.data.remote.SharedSettingsFetchResult
 import com.liferadio.sync.data.local.DataCollector
+import com.liferadio.sync.data.local.AccessiblePhoto
+import com.liferadio.sync.data.local.MediaStorePhotoReader
+import com.liferadio.sync.data.local.PhotoPermissionScope
+import com.liferadio.sync.data.local.PhotoSyncSelectionEntity
+import com.liferadio.sync.data.local.photoPermissionScope
+import com.liferadio.sync.data.local.photoSelectionDiff
+import com.liferadio.sync.data.local.stablePhotoId
+import com.liferadio.sync.data.remote.CentralPhotoClient
+import com.liferadio.sync.data.remote.PhotoRequestResult
+import com.liferadio.sync.data.remote.PhotoUploadPreparer
 import com.liferadio.sync.data.local.LocalActivityClassifier
 import com.liferadio.sync.data.model.CentralHealthInfo
 import com.liferadio.sync.data.remote.CentralHealthInfoClient
@@ -155,7 +165,21 @@ data class UiState(
     val timelineError: String = "",
     val eventBackground: com.liferadio.sync.data.model.EventBackgroundResponse? = null,
     val eventBackgroundOffline: Boolean = false
+    ,val photoSyncEnabled: Boolean = false
+    ,val photoPermissionScope: PhotoPermissionScope = PhotoPermissionScope.NONE
+    ,val photos: List<PhotoDisplay> = emptyList()
+    ,val photosHasMore: Boolean = false
+    ,val photosLoading: Boolean = false
+    ,val photoChangesAdditions: Int = 0
+    ,val photoChangesRemovals: Int = 0
+    ,val photoSyncMessage: String = ""
+    ,val photoSyncing: Boolean = false
 )
+
+data class PhotoDisplay(val photo: AccessiblePhoto, val selection: PhotoSyncSelectionEntity?) {
+    val desiredSynced get() = selection?.desiredSynced == true
+    val centralDeleted get() = selection?.centralState == "deleted"
+}
 
 data class StepSampleDisplay(
     val hour: Int,                    // 0-23
@@ -295,6 +319,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var centralTriggerClient: com.liferadio.sync.data.remote.CentralTriggerClient? = createTriggerClient()
     private var _triggerBaseUrl: String = settings.centralBaseUrl
     private var _triggerCreateRequestId: String? = null
+    private var centralPhotoClient: CentralPhotoClient? = createPhotoClient()
+    private var photoRefreshJob: kotlinx.coroutines.Job? = null
+    private fun createPhotoClient(): CentralPhotoClient? = settings.centralBaseUrl.takeIf { it.isNotBlank() }?.let { url ->
+        CentralPhotoClient(baseUrl = url, tokenProvider = { settings.getCentralToken() })
+    }
 
     private fun createTriggerClient(): com.liferadio.sync.data.remote.CentralTriggerClient? {
         val url = settings.centralBaseUrl
@@ -340,6 +369,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 syncIntervalMinutes = settings.syncIntervalMinutes,
                 locationTrackingEnabled = settings.isLocationTrackingEnabled,
                 backgroundAutostartConfirmed = settings.backgroundAutostartConfirmed
+                ,photoSyncEnabled = settings.isPhotoSyncEnabled
+                ,photoPermissionScope = photoPermissionScope(getApplication())
             )
         }
 
@@ -373,6 +404,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshBackgroundRuntimeStatus()
         viewModelScope.launch { refreshSharedSettings() }
         refreshNativeCollectionStatus()
+        refreshPhotos(reset = true)
         refreshHealthInfo()
         refreshStepCounter()
         refreshWishes()
@@ -613,6 +645,131 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 centralLastStatus = settings.centralLastStatus,
                 centralNextRetryAt = settings.centralNextRetryAt
             )
+        }
+    }
+
+    fun setPhotoSyncEnabled(enabled: Boolean) {
+        settings.isPhotoSyncEnabled = enabled
+        _uiState.update { it.copy(photoSyncEnabled = enabled, photoSyncMessage = "") }
+        if (enabled) refreshPhotos(reset = true) else _uiState.update { it.copy(photos = emptyList(), photosHasMore = false) }
+    }
+
+    fun refreshPhotos(reset: Boolean = true) {
+        photoRefreshJob?.cancel()
+        photoRefreshJob = viewModelScope.launch {
+            val scope = photoPermissionScope(getApplication())
+            _uiState.update { it.copy(photoPermissionScope = scope) }
+            if (!_uiState.value.photoSyncEnabled || scope == PhotoPermissionScope.NONE) {
+                _uiState.update { it.copy(photos = emptyList(), photosHasMore = false, photosLoading = false) }; return@launch
+            }
+            val offset = if (reset) 0 else _uiState.value.photos.size
+            _uiState.update { it.copy(photosLoading = true) }
+            val page = withContext(kotlinx.coroutines.Dispatchers.IO) { MediaStorePhotoReader(getApplication()).loadPage(_uiState.value.sharedDayStartHour, 60, offset) }
+            // Central is authoritative for its own deletion state. An absent local MediaStore row is
+            // never sent here and therefore cannot become a deletion request.
+            val client = centralPhotoClient ?: createPhotoClient()?.also { centralPhotoClient = it }
+            val remoteStates = mutableMapOf<String, String>()
+            if (client != null && settings.isCentralTokenConfigured) withContext(kotlinx.coroutines.Dispatchers.IO) {
+                var cursor: String? = null
+                do {
+                    when (val remote = client.list(cursor)) {
+                        is PhotoRequestResult.Success -> {
+                            remote.value.photos.forEach { metadata ->
+                                remoteStates[metadata.photoId] = metadata.status
+                                if (metadata.status == "deleted") {
+                                    database.photoSyncSelectionDao().markCentralDeleted(metadata.photoId)
+                                } else {
+                                    database.photoSyncSelectionDao().updateCentralState(metadata.photoId, metadata.status)
+                                }
+                            }
+                            cursor = remote.value.nextCursor
+                        }
+                        is PhotoRequestResult.Failure -> cursor = null
+                    }
+                } while (cursor != null)
+            }
+            val dao = database.photoSyncSelectionDao()
+            val existing = if (page.isEmpty()) emptyMap() else dao.getByMediaStoreIds(page.map { it.mediaStoreId }).associateBy { it.mediaStoreId }
+            page.forEach { photo ->
+                if (existing[photo.mediaStoreId] == null) {
+                    val photoId = stablePhotoId(photo.mediaStoreId)
+                    val remoteState = remoteStates[photoId]
+                    if (remoteState != null) {
+                        dao.upsert(
+                            PhotoSyncSelectionEntity(
+                                photoId = photoId,
+                                mediaStoreId = photo.mediaStoreId,
+                                desiredSynced = remoteState == "active",
+                                confirmedSynced = remoteState == "active",
+                                centralState = remoteState,
+                                businessDate = photo.businessDate
+                            )
+                        )
+                    }
+                }
+            }
+            val selections = if (page.isEmpty()) emptyMap() else dao.getByMediaStoreIds(page.map { it.mediaStoreId }).associateBy { it.mediaStoreId }
+            val displays = page.map { PhotoDisplay(it, selections[it.mediaStoreId]) }
+            val allDiff = photoSelectionDiff(dao.getAll())
+            _uiState.update { state ->
+                val combined = if (reset) displays else (state.photos + displays).distinctBy { it.photo.mediaStoreId }
+                state.copy(photos = combined, photosHasMore = page.size == 60, photosLoading = false, photoChangesAdditions = allDiff.additions, photoChangesRemovals = allDiff.removals)
+            }
+        }
+    }
+
+    fun togglePhoto(photo: PhotoDisplay) {
+        viewModelScope.launch {
+            if (database.photoSyncSelectionDao().getAll().any { it.pendingSyncId != null }) {
+                _uiState.update { it.copy(photoSyncMessage = "请先重试完成上次照片同步，再调整选择") }
+                return@launch
+            }
+            val current = photo.selection
+            val replacement = PhotoSyncSelectionEntity(
+                photoId = current?.photoId ?: stablePhotoId(photo.photo.mediaStoreId), mediaStoreId = photo.photo.mediaStoreId,
+                desiredSynced = !photo.desiredSynced, confirmedSynced = current?.confirmedSynced ?: false,
+                centralState = current?.centralState ?: "unknown", pendingSyncId = null, businessDate = photo.photo.businessDate
+            )
+            database.photoSyncSelectionDao().upsert(replacement)
+            val updated = _uiState.value.photos.map { if (it.photo.mediaStoreId == photo.photo.mediaStoreId) PhotoDisplay(it.photo, replacement) else it }
+            val diff = photoSelectionDiff(database.photoSyncSelectionDao().getAll())
+            _uiState.update { it.copy(photos = updated, photoChangesAdditions = diff.additions, photoChangesRemovals = diff.removals, photoSyncMessage = "") }
+        }
+    }
+
+    fun confirmPhotoChanges() {
+        viewModelScope.launch {
+            val selections = database.photoSyncSelectionDao().getAll()
+            val diff = photoSelectionDiff(selections)
+            if (!diff.hasChanges) return@launch
+            val client = centralPhotoClient ?: createPhotoClient()?.also { centralPhotoClient = it }
+            if (client == null || !settings.isCentralTokenConfigured) { _uiState.update { it.copy(photoSyncMessage = "请先绑定中央服务", photoSyncing = false) }; return@launch }
+            val changed = selections.filter { it.desiredSynced != it.confirmedSynced }
+            val existingSyncIds = changed.mapNotNull { it.pendingSyncId }.distinct()
+            if (existingSyncIds.size > 1) { _uiState.update { it.copy(photoSyncMessage = "照片同步正在整理，请稍后重试") }; return@launch }
+            val syncId = existingSyncIds.singleOrNull() ?: java.util.UUID.randomUUID().toString().also { database.photoSyncSelectionDao().markPending(changed.map { selection -> selection.photoId }, it) }
+            _uiState.update { it.copy(photoSyncing = true, photoSyncMessage = "正在确认照片同步…") }
+            val visible = _uiState.value.photos.associateBy { it.selection?.photoId }
+            var failures = 0
+            for (selection in changed) {
+                val result = if (selection.desiredSynced) {
+                    val local = visible[selection.photoId]?.photo
+                    val copy = local?.let { PhotoUploadPreparer.prepare(getApplication(), it.uri) }
+                    if (local == null || copy == null) { failures++; continue } else client.upload(selection.photoId, local, copy, syncId)
+                } else client.delete(selection.photoId, syncId)
+                if (result !is PhotoRequestResult.Success) failures++
+            }
+            val completed = if (failures == 0) client.complete(syncId) else PhotoRequestResult.Failure("仍有上传或删除失败")
+            if (completed is PhotoRequestResult.Success) {
+                changed.filter { it.desiredSynced }.map { it.photoId }.takeIf { it.isNotEmpty() }?.let {
+                    database.photoSyncSelectionDao().markConfirmed(it, "active")
+                }
+                changed.filterNot { it.desiredSynced }.map { it.photoId }.takeIf { it.isNotEmpty() }?.let {
+                    database.photoSyncSelectionDao().markConfirmed(it, "deleted")
+                }
+            }
+            refreshPhotos(reset = true)
+            _uiState.update { it.copy(photoSyncing = false, photoSyncMessage = when (completed) { is PhotoRequestResult.Success -> "已确认：新增 ${completed.value.addedCount} 张，移除 ${completed.value.removedCount} 张"; else -> if (failures > 0) "有 $failures 张未完成，将保留变更后重试" else "同步确认暂未完成，将自动重试" }) }
         }
     }
 

@@ -1,0 +1,38 @@
+#page-photos { max-width: none; }
+.photo-page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.photo-view-toggle { display: flex; gap: 8px; flex-wrap: wrap; }
+.photo-view-toggle button, .photos-load-more, .photo-delete { border: 1px solid var(--border); border-radius: 7px; padding: 8px 12px; background: var(--bg); color: var(--text); cursor: pointer; font: inherit; font-size: 13px; }
+.photo-view-toggle button.active { border-color: var(--accent); background: var(--accent); color: #fff; font-weight: 600; }
+.photos-status { margin-bottom: 16px; padding: 10px 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text-secondary); }
+.photos-status.error { border-color: #eab0b0; background: #fff0f0; color: #9a3030; }
+.photos-status.success { border-color: #a8d5bd; background: #effaf2; color: #246b3f; }
+.photos-groups { display: grid; gap: 24px; }
+.photo-group { padding-top: 2px; }
+.photo-group-heading { display: flex; align-items: baseline; gap: 8px; margin: 0 0 12px; font-size: 16px; color: var(--text); }
+.photo-group-heading span { color: var(--text-secondary); font-size: 12px; font-weight: 400; }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(184px, 1fr)); gap: 14px; }
+.photo-card { overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); box-shadow: var(--shadow); }
+.photo-preview { position: relative; display: grid; aspect-ratio: 1 / .82; place-items: center; overflow: hidden; background: var(--bg); color: var(--text-secondary); }
+.photo-preview img { width: 100%; height: 100%; object-fit: cover; }
+.photo-preview img.failed { display: none; }
+.photo-preview:has(img.failed)::after { content: '照片暂不可读取'; color: var(--text-secondary); font-size: 13px; }
+.photo-preview > i { width: 24px; height: 24px; margin-bottom: 4px; }
+.photo-preview > span { font-size: 13px; }
+.photo-card-body { display: grid; gap: 7px; padding: 10px 11px 11px; }
+.photo-card-meta { display: grid; gap: 3px; min-width: 0; color: var(--text-secondary); font-size: 12px; }
+.photo-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.photo-time-fallback { color: #9a6a18; font-size: 11px; }
+.photo-delete { justify-self: start; padding: 5px 8px; color: #a02d2d; font-size: 12px; }
+.photo-delete:hover { border-color: #c75b5b; background: #fff5f5; }
+.photo-delete:disabled, .photos-load-more:disabled { cursor: wait; opacity: .6; }
+.photos-load-more-wrap { display: flex; justify-content: center; padding: 24px 0 8px; }
+.photos-load-more { border-color: var(--accent); color: var(--accent); background: var(--card-bg); }
+.photos-empty { display: grid; min-height: 260px; place-items: center; align-content: center; gap: 8px; border: 1px dashed var(--border); border-radius: 10px; color: var(--text-secondary); text-align: center; }
+.photos-empty i { width: 32px; height: 32px; }
+.photos-empty strong { color: var(--text); }
+.photos-empty span { font-size: 13px; }
+.photos-load-sentinel { height: 1px; }
+@media (max-width: 640px) {
+  .photo-page-header { align-items: flex-start; flex-direction: column; }
+  .photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+}

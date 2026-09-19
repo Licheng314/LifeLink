@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Life Link Context Sync API
-  version: 1.16.0
+  version: 1.17.0
   description: |
     Android、PC/Web 采集器与中央上下文服务之间的同步协议。
     所有时间均为 UTC ISO 8601（带 Z），持续时长单位为秒。
@@ -35,6 +35,7 @@ info:
     v1.15.4 为时间线读取增加 ETag 条件校验；内容未变化时返回无正文的 304，避免 PC 小窗与 WebUI 重复下载完整业务日数据。
     v1.15.5 增加周历业务日摘要读取；以共享跨日起点按互斥模块返回逻辑内容量，不改变认证、上传或 SQLite 数据。
     v1.16.0 增加中央权威的每日重复时间区间；它是用户主动安排而非采集事实，普通区间在业务日环中不得重叠，起止相同表示零时长时间锚。
+    v1.17.0 增加来源设备隔离的照片同步：图片二进制只存中央 media/photos，SQLite 仅保存元数据、同步幂等状态和删除墓碑。设备只能读取、上传或删除自己的记录；确认同步按 sync_id 最多投影一次普通重要度文字汇总事件，AI 不获得图片二进制或 URL。
 servers:
   - url: https://{host}
     variables:
@@ -1376,6 +1377,59 @@ paths:
           description: 凭据不具备管理权限
         '404':
           description: 规则不存在
+  /v1/photos:
+    get:
+      summary: 分页读取当前设备来源的照片同步状态
+      operationId: listOwnPhotos
+      security: [{registeredDeviceAuth: []}]
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 30}}
+        - {name: cursor, in: query, schema: {type: string}}
+        - {name: include_deleted, in: query, schema: {type: boolean, default: true}}
+      responses:
+        '200': {description: 照片元数据分页，不含图片内容}
+  /v1/photos/{photo_id}/content:
+    post:
+      summary: 幂等上传单张不可变图片二进制
+      operationId: uploadPhotoContent
+      security: [{registeredDeviceAuth: []}]
+      parameters:
+        - {name: photo_id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: X-Photo-Sync-Id, in: header, required: true, schema: {type: string, format: uuid}}
+        - {name: X-Photo-Captured-At, in: header, required: true, schema: {type: string, format: date-time}}
+        - {name: X-Photo-Time-Source, in: header, required: true, schema: {type: string, enum: [captured, added]}}
+        - {name: X-Photo-Mime-Type, in: header, required: true, schema: {type: string, enum: [image/jpeg, image/png, image/webp, image/gif, image/heic]}}
+        - {name: X-Photo-Width, in: header, required: true, schema: {type: integer, minimum: 1}}
+        - {name: X-Photo-Height, in: header, required: true, schema: {type: integer, minimum: 1}}
+        - {name: X-Photo-Byte-Size, in: header, required: true, schema: {type: integer, minimum: 1, maximum: 20971520}}
+        - {name: X-Photo-Sha256, in: header, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}}
+      requestBody: {required: true, content: {image/jpeg: {schema: {type: string, format: binary}}, image/png: {schema: {type: string, format: binary}}, image/webp: {schema: {type: string, format: binary}}, image/gif: {schema: {type: string, format: binary}}, image/heic: {schema: {type: string, format: binary}}}}
+      responses: {'201': {description: 新增或重新同步}, '200': {description: 完全相同内容的幂等重试}, '400': {description: 尺寸、哈希、MIME 或文件签名无效}}
+  /v1/photos/{photo_id}:
+    delete:
+      summary: 逻辑删除当前设备来源的中央副本
+      operationId: deleteOwnPhoto
+      security: [{registeredDeviceAuth: []}]
+      parameters:
+        - {name: photo_id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: X-Photo-Sync-Id, in: header, required: true, schema: {type: string, format: uuid}}
+      responses: {'200': {description: 返回墓碑状态}, '404': {description: 该来源不存在照片}}
+  /v1/photos/{photo_id}/delete:
+    post:
+      summary: DELETE 的 HTTPS 传输兼容别名
+      operationId: deleteOwnPhotoCompat
+      security: [{registeredDeviceAuth: []}]
+      parameters:
+        - {name: photo_id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: X-Photo-Sync-Id, in: header, required: true, schema: {type: string, format: uuid}}
+      responses: {'200': {description: 与 DELETE 完全相同的来源隔离和 X-Photo-Sync-Id 语义}}
+  /v1/photos/sync-complete:
+    post:
+      summary: 完成一次用户确认同步并幂等生成文字汇总事件
+      operationId: completePhotoSync
+      security: [{registeredDeviceAuth: []}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [sync_id], additionalProperties: false, properties: {sync_id: {type: string, format: uuid}}}}}}
+      responses: {'200': {description: 返回 added_count、current_business_date_added_count、removed_count、business_date 和 timeline_event_id；同 sync_id 重试返回首次结果}}
 components:
   securitySchemes:
     bearerAuth:

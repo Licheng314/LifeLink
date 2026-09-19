@@ -118,6 +118,7 @@ async function selectBusinessDate(date) {
   if (page === 'app-usage' && typeof loadMultiDeviceUsage === 'function') await loadMultiDeviceUsage();
   if (page === 'location' && typeof loadLocationSummary === 'function') await loadLocationSummary();
   if (page === 'health-info' && typeof requestHealthInfoLoad === 'function') await requestHealthInfoLoad();
+  if (page === 'photos' && typeof loadPhotosPage === 'function') await loadPhotosPage();
 }
 async function initializeBusinessCalendar() {
   const requested = calendarDateFromUrl();
@@ -155,6 +156,7 @@ async function initializeBusinessCalendar() {
       if (page === 'app-usage' && typeof loadMultiDeviceUsage === 'function') await loadMultiDeviceUsage();
       if (page === 'location' && typeof loadLocationSummary === 'function') await loadLocationSummary();
       if (page === 'health-info' && typeof requestHealthInfoLoad === 'function') await requestHealthInfoLoad();
+      if (page === 'photos' && typeof loadPhotosPage === 'function') await loadPhotosPage();
     }
     if (requested && requested !== calendarState.todayDate && !calendarState.days.get(requested)?.available) await selectBusinessDate(calendarState.todayDate);
   } catch (error) {
@@ -183,6 +185,9 @@ function activatePage(page) {
   }
   if (page === 'health-info' && typeof requestHealthInfoLoad === 'function') {
     requestHealthInfoLoad().catch(console.warn);
+  }
+  if (page === 'photos' && typeof loadPhotosPage === 'function') {
+    loadPhotosPage().catch(console.warn);
   }
   if (page === 'timeline-events' && typeof refreshEventsTimelineFromSharedCache === 'function') {
     if (isHistoricalDataView() && typeof loadEventsTimeline === 'function') loadEventsTimeline().catch(console.warn);

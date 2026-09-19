@@ -36,7 +36,7 @@ class AIReaderContractTests(unittest.TestCase):
         cls.claim_fixture = json.loads(CLAIM_FIXTURE_PATH.read_text(encoding="utf-8"))
 
     def test_version_and_pairing_claim_are_strict(self) -> None:
-        self.assertIn("version: 1.16.0", self.openapi)
+        self.assertIn("version: 1.17.0", self.openapi)
         self.assertEqual(self.claim_schema["$schema"], "https://json-schema.org/draft/2020-12/schema")
         self.assertFalse(self.claim_schema["additionalProperties"])
         self.assertEqual(

@@ -2,12 +2,17 @@ package com.liferadio.sync.ui.screens
 
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
+import android.util.Size
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,7 +28,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
@@ -103,6 +110,7 @@ fun MainScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val appVersion = remember { getAppVersion(context) }
 
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -116,6 +124,14 @@ fun MainScreen(
         ) {
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshPhotos(reset = true)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Scaffold(
@@ -168,6 +184,12 @@ fun MainScreen(
                 NavigationBarItem(
                     selected = selectedTab == 3,
                     onClick = { selectedTab = 3 },
+                    icon = { Icon(Icons.Filled.PhotoLibrary, contentDescription = null) },
+                    label = { Text("照片") }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 4,
+                    onClick = { selectedTab = 4 },
                     icon = { Icon(painterResource(R.drawable.ic_lucide_settings_2), contentDescription = null) },
                     label = { Text("设置") }
                 )
@@ -180,7 +202,8 @@ fun MainScreen(
             0 -> EventListScreen(uiState, viewModel, Modifier.padding(padding))
             1 -> WishesScreen(uiState, viewModel, Modifier.padding(padding))
             2 -> DataTab(uiState, viewModel, Modifier.padding(padding))
-            3 -> SettingsTab(uiState, viewModel, Modifier.padding(padding))
+            3 -> PhotosTab(uiState, viewModel, Modifier.padding(padding))
+            4 -> SettingsTab(uiState, viewModel, Modifier.padding(padding))
         }
     }
     // Exactly one root-mounted instance serves creation, active editing, and history editing.
@@ -2135,6 +2158,114 @@ private fun SettingsExpandableCard(
     }
 }
 
+@Composable
+private fun PhotosTab(uiState: UiState, viewModel: MainViewModel, modifier: Modifier = Modifier) {
+    val today = com.liferadio.sync.data.model.EventBusinessDay.at(uiState.sharedDayStartHour, Instant.now()).toString()
+    val todayPhotos = uiState.photos.filter { it.photo.businessDate == today }
+    val olderGroups = uiState.photos.filterNot { it.photo.businessDate == today }.groupBy { it.photo.businessDate }.toSortedMap(compareByDescending { it })
+    Box(modifier) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 84.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item {
+                Text("照片", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text("仅浏览当前允许访问的图片；勾选是本机期望同步集。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.SELECTED) Text("当前为所选照片访问：可见范围可能不完整。", style = MaterialTheme.typography.bodySmall, color = Warning)
+                if (!uiState.photoSyncEnabled) Text("请先在设置中启用照片同步。", style = MaterialTheme.typography.bodyMedium, color = Warning)
+                if (uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.NONE && uiState.photoSyncEnabled) Text("需要照片权限后才能浏览。", style = MaterialTheme.typography.bodyMedium, color = Warning)
+                if (uiState.photoSyncMessage.isNotBlank()) Text(uiState.photoSyncMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+            item {
+                Text("今日照片", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Divider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+            if (todayPhotos.isNotEmpty()) {
+                items(todayPhotos, key = { it.photo.mediaStoreId }) { PhotoRow(it, viewModel) }
+            } else if (uiState.photoSyncEnabled && uiState.photoPermissionScope != com.liferadio.sync.data.local.PhotoPermissionScope.NONE) {
+                item { Text("当前业务日暂无可访问照片。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            if (olderGroups.isNotEmpty()) item { Text("过往照片", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            olderGroups.forEach { (date, photos) ->
+                item(key = "date-$date") {
+                    Column(modifier = Modifier.padding(top = 8.dp)) {
+                        Text(date, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.height(6.dp))
+                        Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                    }
+                }
+                items(photos, key = { it.photo.mediaStoreId }) { PhotoRow(it, viewModel) }
+            }
+            if (uiState.photosHasMore) item { OutlinedButton(onClick = { viewModel.refreshPhotos(reset = false) }, enabled = !uiState.photosLoading, modifier = Modifier.fillMaxWidth()) { Text(if (uiState.photosLoading) "正在加载…" else "继续加载") } }
+        }
+        if (uiState.photoChangesAdditions > 0 || uiState.photoChangesRemovals > 0) {
+            Surface(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(), color = MaterialTheme.colorScheme.primaryContainer, tonalElevation = 4.dp) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("新增 ${uiState.photoChangesAdditions} 张，移除 ${uiState.photoChangesRemovals} 张", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Button(onClick = { viewModel.confirmPhotoChanges() }, enabled = !uiState.photoSyncing) { Text(if (uiState.photoSyncing) "同步中…" else "确认同步") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PhotoRow(item: PhotoDisplay, viewModel: MainViewModel) {
+    Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth().clickable { viewModel.togglePhoto(item) }) {
+        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            PhotoThumbnail(item.photo.uri)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(item.photo.capturedAt.atZone(ZoneId.of("Asia/Shanghai")).format(DateTimeFormatter.ofPattern("MM-dd HH:mm")), style = MaterialTheme.typography.bodyMedium)
+                Text("${item.photo.width} × ${item.photo.height} · ${item.photo.timeSource}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (item.centralDeleted) Text("中央副本已删除；再次勾选并确认可重新上传", style = MaterialTheme.typography.labelSmall, color = Warning)
+            }
+            Checkbox(checked = item.desiredSynced, onCheckedChange = { viewModel.togglePhoto(item) })
+        }
+    }
+}
+
+@Composable
+private fun PhotoThumbnail(uri: Uri) {
+    val context = LocalContext.current
+    val bitmap by produceState<Bitmap?>(initialValue = null, uri) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    context.contentResolver.loadThumbnail(uri, Size(256, 256), null)
+                } else {
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                    var sample = 1
+                    while (bounds.outWidth / sample > 256 || bounds.outHeight / sample > 256) sample *= 2
+                    context.contentResolver.openInputStream(uri)?.use {
+                        BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+                    }
+                }
+            }.getOrNull()
+        }
+    }
+    DisposableEffect(bitmap) {
+        onDispose { bitmap?.recycle() }
+    }
+    Surface(
+        modifier = Modifier.size(56.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(6.dp)
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Modifier = Modifier) {
@@ -2149,6 +2280,9 @@ private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Mo
             permissions[android.Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (granted) viewModel.setLocationTrackingEnabled(true) else viewModel.refreshLocationStatus()
     }
+    val photoPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { viewModel.refreshPhotos(reset = true) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshBackgroundRuntimeStatus()
@@ -2430,6 +2564,35 @@ private fun SettingsTab(uiState: UiState, viewModel: MainViewModel, modifier: Mo
                             }
                         )
                     }
+            }
+        }
+
+        item {
+            SettingsExpandableCard(
+                title = "照片同步",
+                summary = when {
+                    !uiState.photoSyncEnabled -> "未启用，不会读取手机相册"
+                    uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.NONE -> "已启用，等待照片权限"
+                    uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.SELECTED -> "已启用：仅所选照片可见"
+                    else -> "已启用：可浏览所有获准照片"
+                },
+                needsAttention = uiState.photoSyncEnabled && uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.NONE,
+                initiallyExpanded = uiState.photoSyncEnabled
+            ) {
+                Text("照片只在你启用后才读取。权限收窄或原图暂时不可见不会取消已选同步项，也不会删除中央副本。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("启用照片同步", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = uiState.photoSyncEnabled, onCheckedChange = { viewModel.setPhotoSyncEnabled(it) })
+                }
+                if (uiState.photoSyncEnabled) {
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = {
+                        if (android.os.Build.VERSION.SDK_INT >= 34) photoPermissionLauncher.launch(arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES, android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED))
+                        else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) photoPermissionLauncher.launch(arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES))
+                        else photoPermissionLauncher.launch(arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE))
+                    }) { Text(if (uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.NONE) "授予照片权限" else "更新照片权限") }
+                }
             }
         }
 

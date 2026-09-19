@@ -74,6 +74,22 @@ data class StepObservationEntity(
     @ColumnInfo(name = "counter_session_id") val counterSessionId: String
 )
 
+/**
+ * Local user intent and last known central state. This is not a mirror of MediaStore: a missing
+ * or no-longer-permitted URI must never be interpreted as a requested central deletion.
+ */
+@Entity(tableName = "photo_sync_selections", indices = [Index(value = ["desired_synced"]), Index(value = ["business_date"])])
+data class PhotoSyncSelectionEntity(
+    @PrimaryKey @ColumnInfo(name = "photo_id") val photoId: String,
+    @ColumnInfo(name = "media_store_id") val mediaStoreId: Long,
+    @ColumnInfo(name = "desired_synced") val desiredSynced: Boolean,
+    @ColumnInfo(name = "confirmed_synced") val confirmedSynced: Boolean = false,
+    @ColumnInfo(name = "central_state") val centralState: String = "unknown",
+    @ColumnInfo(name = "pending_sync_id") val pendingSyncId: String? = null,
+    @ColumnInfo(name = "business_date") val businessDate: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
+)
+
 @Dao
 interface DataEventDao {
     @Query("SELECT EXISTS(SELECT 1 FROM data_events WHERE id = :eventId)")
@@ -209,9 +225,33 @@ interface StepObservationDao {
     suspend fun getBetween(start: Long, end: Long): List<StepObservationEntity>
 }
 
+@Dao
+interface PhotoSyncSelectionDao {
+    @Query("SELECT * FROM photo_sync_selections WHERE media_store_id IN (:mediaStoreIds)")
+    suspend fun getByMediaStoreIds(mediaStoreIds: List<Long>): List<PhotoSyncSelectionEntity>
+
+    @Query("SELECT * FROM photo_sync_selections")
+    suspend fun getAll(): List<PhotoSyncSelectionEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(selection: PhotoSyncSelectionEntity)
+
+    @Query("UPDATE photo_sync_selections SET confirmed_synced = desired_synced, central_state = :centralState, pending_sync_id = NULL, updated_at = :updatedAt WHERE photo_id IN (:photoIds)")
+    suspend fun markConfirmed(photoIds: List<String>, centralState: String, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("UPDATE photo_sync_selections SET desired_synced = 0, confirmed_synced = 0, central_state = 'deleted', pending_sync_id = NULL, updated_at = :updatedAt WHERE photo_id = :photoId")
+    suspend fun markCentralDeleted(photoId: String, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("UPDATE photo_sync_selections SET pending_sync_id = :syncId WHERE photo_id IN (:photoIds)")
+    suspend fun markPending(photoIds: List<String>, syncId: String)
+
+    @Query("UPDATE photo_sync_selections SET central_state = :centralState, updated_at = :updatedAt WHERE photo_id = :photoId")
+    suspend fun updateCentralState(photoId: String, centralState: String, updatedAt: Long = System.currentTimeMillis())
+}
+
 @Database(
-    entities = [DataEventEntity::class, LocationSampleEntity::class, SyncLogEntity::class, EventDeliveryEntity::class, StepObservationEntity::class],
-    version = 6,
+    entities = [DataEventEntity::class, LocationSampleEntity::class, SyncLogEntity::class, EventDeliveryEntity::class, StepObservationEntity::class, PhotoSyncSelectionEntity::class],
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -220,6 +260,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDeliveryDao(): EventDeliveryDao
     abstract fun syncLogDao(): SyncLogDao
     abstract fun stepObservationDao(): StepObservationDao
+    abstract fun photoSyncSelectionDao(): PhotoSyncSelectionDao
 
     companion object {
         @Volatile
@@ -231,7 +272,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "liferadio.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build()
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build()
                 INSTANCE = instance
                 instance
             }
@@ -326,6 +367,31 @@ abstract class AppDatabase : RoomDatabase() {
                 """.trimIndent())
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_step_observations_observed_at ON step_observations(observed_at)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_step_observations_counter_session_id ON step_observations(counter_session_id)")
+            }
+        }
+
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS photo_sync_selections (
+                        photo_id TEXT NOT NULL,
+                        media_store_id INTEGER NOT NULL,
+                        desired_synced INTEGER NOT NULL,
+                        confirmed_synced INTEGER NOT NULL,
+                        central_state TEXT NOT NULL,
+                        business_date TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY(photo_id)
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_photo_sync_selections_desired_synced ON photo_sync_selections(desired_synced)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_photo_sync_selections_business_date ON photo_sync_selections(business_date)")
+            }
+        }
+
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE photo_sync_selections ADD COLUMN pending_sync_id TEXT")
             }
         }
     }

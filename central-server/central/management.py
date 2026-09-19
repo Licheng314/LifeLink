@@ -11,6 +11,7 @@ import hmac
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -55,6 +56,7 @@ STATIC_ASSETS = {
     "assets/scripts/devices.js": "application/javascript; charset=utf-8",
     "assets/scripts/health-info.js": "application/javascript; charset=utf-8",
     "assets/scripts/location.js": "application/javascript; charset=utf-8",
+    "assets/scripts/photos.js": "application/javascript; charset=utf-8",
     "assets/scripts/time-intervals.js": "application/javascript; charset=utf-8",
     "assets/scripts/shared-ui.js": "application/javascript; charset=utf-8",
     "assets/scripts/tools.js": "application/javascript; charset=utf-8",
@@ -63,6 +65,7 @@ STATIC_ASSETS = {
     "assets/styles/base.css": "text/css; charset=utf-8",
     "assets/styles/central-management.css": "text/css; charset=utf-8",
     "assets/styles/components.css": "text/css; charset=utf-8",
+    "assets/styles/photos.css": "text/css; charset=utf-8",
     "assets/styles/tools.css": "text/css; charset=utf-8",
     "assets/styles/time-intervals.css": "text/css; charset=utf-8",
     "assets/styles/wishes-events.css": "text/css; charset=utf-8",
@@ -278,6 +281,27 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
             except OSError:
                 self._send(500, {"error": "ai_reader_skill_unavailable", "message": "AI Reader Skill 不可用"})
             return
+        if path == "/api/photos":
+            try:
+                if set(parse_qs(parsed.query, keep_blank_values=True)) - {"limit", "cursor", "current_business_date_only"}:
+                    raise ValueError("invalid photo query")
+                params = parse_qs(parsed.query, keep_blank_values=True)
+                payload = self.server.data_server.photos.list(
+                    source_device_id=None, cursor=params.get("cursor", [None])[0],
+                    limit=int(params.get("limit", ["30"])[0]), include_deleted=False,
+                    business_date=self._current_business_date() if params.get("current_business_date_only") == ["true"] else None,
+                )
+                self._send(200, payload)
+            except ValueError as error:
+                self._send(400, {"error": "invalid_photo_query", "message": str(error)})
+            return
+        photo_match = re.fullmatch(r"/api/photos/([0-9a-f-]{36})/content", path)
+        if photo_match:
+            source = parse_qs(parsed.query).get("source_device_id", [None])[0]
+            if not isinstance(source, str): self._send(400, {"error":"source_device_id_required"}); return
+            item = self.server.data_server.photos.content(source, photo_match.group(1))
+            if item is None: self._send(404, {"error":"photo_not_found"}); return
+            self._send(200, item[0], item[1]); return
         if path == "/api/ai-connection-mcp-config":
             # This is the same non-secret template included in every package.
             # It intentionally has no pairing token, reader identity or path.
@@ -610,6 +634,16 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path.startswith("/api/wishes/"):
             self._wish_write_compat("DELETE", path); return
+        photo_match = re.fullmatch(r"/api/photos/([0-9a-f-]{36})", path)
+        if photo_match:
+            source = parse_qs(urlparse(self.path).query).get("source_device_id", [None])[0]
+            if not isinstance(source, str): self._send(400, {"error":"source_device_id_required"}); return
+            try:
+                photo, changed = self.server.data_server.photos.delete(source, photo_match.group(1), str(uuid.uuid4()), admin=True)
+                if photo is None: self._send(404, {"error":"photo_not_found"}); return
+                self._send(200, {"photo": photo, "changed": changed})
+            except ValueError as error: self._send(400, {"error":"invalid_photo", "message":str(error)})
+            return
         self._pc_write_compat("DELETE", path)
 
     def _central_login_startup_status(self) -> None:
