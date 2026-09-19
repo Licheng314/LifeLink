@@ -1,6 +1,5 @@
 package com.liferadio.sync.data.local
 
-import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Context
 import android.content.pm.PackageManager
@@ -10,6 +9,7 @@ import android.provider.MediaStore
 import androidx.core.content.ContextCompat
 import com.liferadio.sync.data.model.EventBusinessDay
 import java.time.Instant
+import java.util.PriorityQueue
 import java.util.UUID
 
 /** The scope actually granted by Android; it is deliberately not inferred from the photo count. */
@@ -51,37 +51,21 @@ class MediaStorePhotoReader(private val context: Context) {
             MediaStore.Images.Media.DATE_ADDED, MediaStore.Images.Media.MIME_TYPE,
             MediaStore.Images.Media.WIDTH, MediaStore.Images.Media.HEIGHT, MediaStore.Images.Media.SIZE
         )
-        val args = android.os.Bundle().apply {
-            putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, arrayOf(MediaStore.Images.Media.DATE_TAKEN, MediaStore.Images.Media._ID))
-            putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
-            putInt(ContentResolver.QUERY_ARG_LIMIT, safeLimit)
-            putInt(ContentResolver.QUERY_ARG_OFFSET, safeOffset)
-        }
         val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val resolver = context.contentResolver
-        return try {
-            resolver.query(uri, projection, args, null)?.use { cursor ->
-                readPage(cursor, dayStartHour, safeLimit, skip = 0)
-            }.orEmpty()
-        } catch (_: IllegalArgumentException) {
-            // Some vendor MediaStore implementations reject structured limit/offset or a
-            // secondary sort column. The compatibility query still reads only metadata and
-            // advances the cursor to the requested page; it never decodes the photo bodies.
-            resolver.query(
-                uri,
-                projection,
-                null,
-                null,
-                "${MediaStore.Images.Media.DATE_TAKEN} DESC, ${MediaStore.Images.Media._ID} DESC"
-            )?.use { cursor -> readPage(cursor, dayStartHour, safeLimit, skip = safeOffset) }.orEmpty()
-        }
+        // MediaStore providers are allowed to ignore structured sort arguments. Several OEM
+        // providers honor LIMIT/OFFSET but return their default (oldest-first) order, which makes
+        // the first page contain only old photos. Scan metadata only and choose the newest page
+        // locally so ordering is deterministic without decoding any image body.
+        return context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            readNewestPage(cursor, dayStartHour, safeLimit, safeOffset)
+        }.orEmpty()
     }
 
-    private fun readPage(
+    private fun readNewestPage(
         cursor: android.database.Cursor,
         dayStartHour: Int,
         limit: Int,
-        skip: Int
+        offset: Int
     ): List<AccessiblePhoto> {
         val idIndex = cursor.getColumnIndex(MediaStore.Images.Media._ID)
         if (idIndex < 0) return emptyList()
@@ -91,9 +75,8 @@ class MediaStorePhotoReader(private val context: Context) {
         val widthIndex = cursor.getColumnIndex(MediaStore.Images.Media.WIDTH)
         val heightIndex = cursor.getColumnIndex(MediaStore.Images.Media.HEIGHT)
         val sizeIndex = cursor.getColumnIndex(MediaStore.Images.Media.SIZE)
-        repeat(skip) { if (!cursor.moveToNext()) return emptyList() }
-        return buildList {
-            while (size < limit && cursor.moveToNext()) {
+        val photos = sequence {
+            while (cursor.moveToNext()) {
                 val id = cursor.getLong(idIndex)
                 val taken = cursor.longOrZero(takenIndex)
                 val added = cursor.longOrZero(addedIndex)
@@ -102,7 +85,7 @@ class MediaStorePhotoReader(private val context: Context) {
                     added > 0 -> Instant.ofEpochSecond(added)
                     else -> Instant.EPOCH
                 }
-                add(AccessiblePhoto(
+                yield(AccessiblePhoto(
                     mediaStoreId = id,
                     uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id),
                     capturedAt = captured,
@@ -115,6 +98,12 @@ class MediaStorePhotoReader(private val context: Context) {
                 ))
             }
         }
+        return newestPage(
+            items = photos,
+            limit = limit,
+            offset = offset,
+            comparator = compareBy<AccessiblePhoto>({ it.capturedAt }, { it.mediaStoreId })
+        )
     }
 
     private fun android.database.Cursor.longOrZero(index: Int): Long =
@@ -125,6 +114,32 @@ class MediaStorePhotoReader(private val context: Context) {
 
     private fun android.database.Cursor.stringOrEmpty(index: Int): String =
         if (index >= 0 && !isNull(index)) getString(index).orEmpty() else ""
+}
+
+/**
+ * Keeps only the requested newest prefix in memory while consuming an arbitrarily ordered
+ * metadata sequence. The comparator must order older/smaller values before newer/larger ones.
+ */
+internal fun <T> newestPage(
+    items: Sequence<T>,
+    limit: Int,
+    offset: Int,
+    comparator: Comparator<T>
+): List<T> {
+    val safeLimit = limit.coerceAtLeast(0)
+    val safeOffset = offset.coerceAtLeast(0)
+    if (safeLimit == 0) return emptyList()
+    val retainedCount = (safeOffset.toLong() + safeLimit).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    val newest = PriorityQueue(retainedCount.coerceAtLeast(1), comparator)
+    items.forEach { item ->
+        if (newest.size < retainedCount) {
+            newest.add(item)
+        } else if (comparator.compare(item, newest.peek()) > 0) {
+            newest.poll()
+            newest.add(item)
+        }
+    }
+    return newest.sortedWith(comparator.reversed()).drop(safeOffset).take(safeLimit)
 }
 
 /** Pure intent comparison; unavailable MediaStore rows are intentionally absent from this input. */

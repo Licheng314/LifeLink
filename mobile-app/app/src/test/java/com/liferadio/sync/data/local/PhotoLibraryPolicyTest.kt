@@ -29,6 +29,26 @@ class PhotoLibraryPolicyTest {
         assertFalse(stablePhotoId(42) == stablePhotoId(43))
     }
 
+    @Test fun `newest page is descending even when provider returns oldest first`() {
+        val page = newestPage(
+            items = sequenceOf(1, 2, 3, 4, 5),
+            limit = 3,
+            offset = 0,
+            comparator = naturalOrder<Int>()
+        )
+        assertEquals(listOf(5, 4, 3), page)
+    }
+
+    @Test fun `newest page applies offset after deterministic ordering`() {
+        val page = newestPage(
+            items = sequenceOf(9, 2, 7, 3, 8, 1),
+            limit = 2,
+            offset = 2,
+            comparator = naturalOrder<Int>()
+        )
+        assertEquals(listOf(7, 3), page)
+    }
+
     private fun selection(id: String, desired: Boolean, confirmed: Boolean) = PhotoSyncSelectionEntity(
         photoId = id, mediaStoreId = id.hashCode().toLong(), desiredSynced = desired, confirmedSynced = confirmed, businessDate = "2026-09-18"
     )
