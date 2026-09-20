@@ -41,6 +41,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -56,6 +58,7 @@ import com.liferadio.sync.ui.theme.Warning
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * 读取应用自身版本号，UI 上始终显示真实版本
@@ -750,8 +753,12 @@ private fun WishEditorDialogs(
                         )
                     }
                     if (selType == "scheduled_reminder") {
-                        OutlinedTextField(value = uiState.wishCreateTriggerParams["reminder_local_time"] ?: "22:30",
-                            onValueChange = { viewModel.setWishCreateTriggerParam("reminder_local_time", it.take(5)) }, label = { Text("提醒时间（HH:mm）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        WheelTimePickerField(
+                            value = uiState.wishCreateTriggerParams["reminder_local_time"] ?: "22:30",
+                            label = "提醒时间",
+                            enabled = !uiState.wishCreateSending,
+                            onTimeSelected = { viewModel.setWishCreateTriggerParam("reminder_local_time", it) }
+                        )
                     }
                     if (selType != null && selType != "scheduled_reminder") {
                         TriggerIntervalChoices(
@@ -892,8 +899,12 @@ private fun WishEditorDialogs(
                         )
                     }
                     if (selType == "scheduled_reminder") {
-                        OutlinedTextField(value = uiState.triggerDialogParams["reminder_local_time"] ?: "22:30",
-                            onValueChange = { viewModel.setTriggerDialogParam("reminder_local_time", it.take(5)) }, label = { Text("提醒时间（HH:mm）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        WheelTimePickerField(
+                            value = uiState.triggerDialogParams["reminder_local_time"] ?: "22:30",
+                            label = "提醒时间",
+                            enabled = !uiState.triggerDialogSending,
+                            onTimeSelected = { viewModel.setTriggerDialogParam("reminder_local_time", it) }
+                        )
                     }
                     if (selType != null && selType != "scheduled_reminder") {
                         TriggerIntervalChoices(
@@ -930,6 +941,98 @@ private fun WishEditorDialogs(
                 TextButton(onClick = { viewModel.dismissTriggerDialog() }) { Text("取消") }
             }
         )
+    }
+}
+
+@Composable
+private fun WheelTimePickerField(
+    value: String,
+    label: String,
+    enabled: Boolean,
+    onTimeSelected: (String) -> Unit
+) {
+    var showPicker by remember { mutableStateOf(false) }
+    val parsed = remember(value) {
+        val match = Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]").matchEntire(value)
+        if (match == null) 22 to 30 else value.substring(0, 2).toInt() to value.substring(3, 5).toInt()
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {},
+            label = { Text(label) },
+            readOnly = true,
+            singleLine = true,
+            enabled = enabled,
+            trailingIcon = { Icon(Icons.Default.AccessTime, contentDescription = "选择时间") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (enabled) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clickable { showPicker = true }
+            )
+        }
+    }
+
+    if (showPicker) {
+        var hour by remember(value, showPicker) { mutableIntStateOf(parsed.first) }
+        var minute by remember(value, showPicker) { mutableIntStateOf(parsed.second) }
+        Dialog(onDismissRequest = { showPicker = false }) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
+                Column(modifier = Modifier.padding(24.dp)) {
+                    Text("选择提醒时间", style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AndroidView(
+                            factory = { context ->
+                                android.widget.NumberPicker(context).apply {
+                                    minValue = 0
+                                    maxValue = 23
+                                    displayedValues = Array(24) { String.format(Locale.ROOT, "%02d", it) }
+                                    wrapSelectorWheel = true
+                                    setOnValueChangedListener { _, _, newValue -> hour = newValue }
+                                }
+                            },
+                            update = { it.value = hour },
+                            modifier = Modifier.width(88.dp).height(160.dp)
+                        )
+                        Text("：", style = MaterialTheme.typography.headlineSmall)
+                        AndroidView(
+                            factory = { context ->
+                                android.widget.NumberPicker(context).apply {
+                                    minValue = 0
+                                    maxValue = 59
+                                    displayedValues = Array(60) { String.format(Locale.ROOT, "%02d", it) }
+                                    wrapSelectorWheel = true
+                                    setOnValueChangedListener { _, _, newValue -> minute = newValue }
+                                }
+                            },
+                            update = { it.value = minute },
+                            modifier = Modifier.width(88.dp).height(160.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(modifier = Modifier.align(Alignment.End)) {
+                        TextButton(onClick = { showPicker = false }) { Text("取消") }
+                        TextButton(onClick = {
+                            onTimeSelected(String.format(Locale.ROOT, "%02d:%02d", hour, minute))
+                            showPicker = false
+                        }) { Text("确定") }
+                    }
+                }
+            }
+        }
     }
 }
 
