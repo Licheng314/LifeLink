@@ -76,6 +76,11 @@
 .event-item .event-detail { font-size:14px; color:var(--text-secondary); margin-top:5px; line-height:1.65; white-space:normal }
 .event-duration-emphasis { color:var(--danger); font-weight:700 }
 .event-item .event-detail.is-collapsed { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden }
+.event-photo-previews { display:flex; align-items:center; gap:7px; margin-top:9px; overflow:hidden }
+.event-photo-thumb { flex:0 0 64px; width:64px; height:52px; overflow:hidden; border:1px solid var(--border); border-radius:7px; padding:0; background:var(--card-bg); cursor:zoom-in }
+.event-photo-thumb:hover, .event-photo-thumb:focus-visible { border-color:var(--accent); outline:none }
+.event-photo-thumb img { display:block; width:100%; height:100%; object-fit:cover }
+.event-photo-more { color:var(--text-secondary); font-size:12px; white-space:nowrap }
 .event-detail-toggle { margin-top:4px; padding:0; border:0; background:transparent; color:var(--accent); cursor:pointer; font-size:12px }
 .event-background-panel details + details, .event-settings-panel details { margin-top:8px }
 .event-background-panel summary, .event-settings-panel summary, .ai-reader-panel summary { cursor:pointer; font-weight:700; color:var(--text) }

@@ -1,10 +1,13 @@
 import json
 import io
 import os
+import hashlib
 import tempfile
 import threading
 import unittest
+import uuid
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
@@ -633,10 +636,40 @@ class CentralManagementTests(unittest.TestCase):
         self.assertIn("loading = 'lazy'", script)
         self.assertIn("source_device_id", script)
         self.assertIn("window.confirm", script)
+        self.assertIn("window.openLifeLinkPhoto", script)
+        self.assertIn("photo-lightbox", script)
+        self.assertIn("remove.textContent = '×'", script)
         self.assertIn("手机相册原图不会被删除", script)
         self.assertIn(".photo-grid", stylesheet)
+        self.assertIn("grid-template-columns: repeat(4", stylesheet)
+        self.assertIn(".photo-lightbox", stylesheet)
+        self.assertIn("sync_previews", management)
         self.assertIn("assets/scripts/photos.js", management)
         self.assertIn("assets/styles/photos.css", management)
+
+    def test_management_timeline_adds_bounded_photo_previews(self):
+        body = b"\x89PNG\r\n\x1a\nmanagement-preview"
+        photo_id, sync_id = str(uuid.uuid4()), str(uuid.uuid4())
+        metadata = {
+            "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "time_source": "captured",
+            "source_label": "截图",
+            "mime_type": "image/png",
+            "width": 10,
+            "height": 20,
+            "byte_size": len(body),
+            "sha256": hashlib.sha256(body).hexdigest(),
+        }
+        self.data.photos.upload("desktop-test", photo_id, metadata, body, sync_id)
+        self.data.photos.complete("desktop-test", sync_id)
+        now = datetime.now(timezone.utc)
+        start = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+        end = (now + timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+        status, payload = self.request(f"/api/timeline-events?from={start}&to={end}")
+        self.assertEqual(status, 200)
+        event = next(item for item in payload["events"] if item["event_key"] == "photo.sync_confirmed")
+        self.assertEqual(event["photo_previews"][0]["photo_id"], photo_id)
+        self.assertEqual(event["photo_previews"][0]["source_label"], "截图")
 
     def test_copied_dashboard_uses_local_vendored_runtime_assets(self):
         web_root = Path(__file__).resolve().parents[1] / "management-web"

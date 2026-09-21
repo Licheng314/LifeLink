@@ -54,6 +54,7 @@ class PhotoStoreTests(unittest.TestCase):
             "X-Photo-Sync-Id": sync_id,
             "X-Photo-Captured-At": metadata["captured_at"],
             "X-Photo-Time-Source": metadata["time_source"],
+            "X-Photo-Source-Label": "%E6%88%AA%E5%9B%BE",
             "X-Photo-Mime-Type": metadata["mime_type"],
             "X-Photo-Width": str(metadata["width"]),
             "X-Photo-Height": str(metadata["height"]),
@@ -63,6 +64,7 @@ class PhotoStoreTests(unittest.TestCase):
         status, uploaded = self.request("POST", f"/v1/photos/{photo_id}/content", token=TOKEN_A, body=body, headers=headers)
         self.assertEqual(status, 201)
         self.assertEqual(uploaded["photo"]["source_device_id"], "android-a")
+        self.assertEqual(uploaded["photo"]["source_label"], "截图")
 
         status, other_device = self.request("GET", "/v1/photos", token=TOKEN_B)
         self.assertEqual(status, 200)
@@ -74,15 +76,18 @@ class PhotoStoreTests(unittest.TestCase):
 
     def test_upload_delete_cross_device_isolation_and_sync_event_idempotency(self):
         photo_id, sync_id = str(uuid.uuid4()), str(uuid.uuid4()); body = self.png()
-        stored, changed = self.server.photos.upload("android-a", photo_id, self.metadata(body), body, sync_id)
+        metadata = {**self.metadata(body), "source_label": "微信"}
+        stored, changed = self.server.photos.upload("android-a", photo_id, metadata, body, sync_id)
         self.assertTrue(changed); self.assertEqual(stored["status"], "active")
-        duplicate, changed = self.server.photos.upload("android-a", photo_id, self.metadata(body), body, sync_id)
+        duplicate, changed = self.server.photos.upload("android-a", photo_id, metadata, body, sync_id)
         self.assertFalse(changed); self.assertEqual(duplicate["sha256"], stored["sha256"])
         self.assertIsNone(self.server.photos.delete("android-b", photo_id, str(uuid.uuid4()))[0])
         first = self.server.photos.complete("android-a", sync_id)
         second = self.server.photos.complete("android-a", sync_id)
         self.assertEqual(first, second)
         self.assertEqual(first["added_count"], 1)
+        previews = self.server.photos.sync_previews("android-a", sync_id, limit=4)
+        self.assertEqual([(item["photo_id"], item["source_label"]) for item in previews], [(photo_id, "微信")])
         with self.server.store._connection() as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM timeline_events WHERE event_key='photo.sync_confirmed'").fetchone()[0], 1)
         deleted, changed = self.server.photos.delete("android-a", photo_id, str(uuid.uuid4()))
@@ -91,6 +96,7 @@ class PhotoStoreTests(unittest.TestCase):
         self.assertIsNotNone(deleted["deleted_at"])
         page = self.server.photos.list(source_device_id="android-a", cursor=None, limit=30)
         self.assertEqual(page["photos"][0]["status"], "deleted")
+        self.assertEqual(self.server.photos.sync_previews("android-a", sync_id, limit=4), [])
 
     def test_rejects_disguised_or_oversized_content_and_paginates(self):
         sync = str(uuid.uuid4())

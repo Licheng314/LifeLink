@@ -13,7 +13,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote_plus, urlparse
 
 from .ai_readers import (
     AIReaderCursorExpired,
@@ -383,6 +383,9 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             value = self.headers.get(header)
             if value is None: raise ValueError(f"{header} is required")
             result[key] = int(value) if key in {"width", "height", "byte_size"} else value
+        source_label = self.headers.get("X-Photo-Source-Label")
+        if source_label is not None:
+            result["source_label"] = unquote_plus(source_label)
         return result
 
     def _handle_photo_get(self, parsed) -> None:

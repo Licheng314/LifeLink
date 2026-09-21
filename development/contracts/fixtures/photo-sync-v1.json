@@ -6,6 +6,7 @@
       "X-Photo-Sync-Id": "0f4f6f7d-1f83-4b2d-a44e-221f9eff6671",
       "X-Photo-Captured-At": "2026-09-18T02:15:30Z",
       "X-Photo-Time-Source": "captured",
+      "X-Photo-Source-Label": "%E6%88%AA%E5%9B%BE",
       "X-Photo-Mime-Type": "image/png",
       "X-Photo-Width": "1080",
       "X-Photo-Height": "1920",
@@ -22,6 +23,7 @@
     "timeline_event_id": "<central-generated UUID>"
   },
   "notes": [
+    "X-Photo-Source-Label is an optional UTF-8 percent-encoded local display label.",
     "The fixture deliberately contains no image binary, token, URL or real hash.",
     "A retry of sync-complete with this sync_id returns the same summary and creates no second timeline event."
   ]

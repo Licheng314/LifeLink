@@ -312,6 +312,20 @@ function scrollTimelineEventToTop(index) {
   target.classList.add('is-timeline-target');
   window.setTimeout(() => target.classList.remove('is-timeline-target'), 1_200);
 }
+function eventPhotoPreviewsHtml(event, eventIndex) {
+  const photos = Array.isArray(event.photo_previews) ? event.photo_previews.slice(0, 4) : [];
+  if (!photos.length) return '';
+  const images = photos.map((photo, photoIndex) => {
+    const params = new URLSearchParams({source_device_id: String(photo.source_device_id || '')});
+    const url = `/api/photos/${encodeURIComponent(photo.photo_id || '')}/content?${params}`;
+    const sourceLabel = photo.source_label && photo.source_label !== '照片' ? photo.source_label : (photo.source_device_id || '照片');
+    const label = `${localDateTime(photo.captured_at).slice(-5)} | ${sourceLabel}`;
+    return '<button type="button" class="event-photo-thumb" data-event-index="' + eventIndex + '" data-photo-index="' + photoIndex + '" title="' + escapeHtml(label) + '" aria-label="查看照片 ' + escapeHtml(label) + '"><img loading="lazy" src="' + escapeHtml(url) + '" alt=""></button>';
+  }).join('');
+  const total = Number(event.evidence?.added_count || photos.length);
+  const remaining = Math.max(0, total - photos.length);
+  return '<div class="event-photo-previews">' + images + (remaining ? '<span class="event-photo-more">另有 ' + remaining + ' 张</span>' : '') + '</div>';
+}
 function renderEventsTimeline() {
   const container = document.getElementById('events-timeline-container');
   if (!container) return;
@@ -338,6 +352,7 @@ function renderEventsTimeline() {
     const fullDetail = detail ? eventDetailHtml(detail) : '';
     const collapsible = detail && detail.split('\n').length > 3;
     const reportBody = (e.event_key === 'report.morning' || e.event_key === 'report.evening' || e.event_key === 'report.periodic') && e.evidence && typeof e.evidence.body === 'string' ? e.evidence.body : '';
+    const photoPreviews = eventPhotoPreviewsHtml(e, events.indexOf(e));
     const aiState = e.importance === 'low' ? 'not_applicable' : (e.ai_reader?.state || 'not_served');
     const aiName = e.ai_reader?.reader_display_name || '';
     const aiMark = aiState === 'served'
@@ -351,6 +366,7 @@ function renderEventsTimeline() {
       + '<div class="event-body">'
       + '<div class="event-title-row"><div class="event-title"><span class="event-icon-tag" style="background:' + icon.color + '" title="' + escapeHtml(icon.label) + '" aria-label="' + escapeHtml(icon.label) + '">' + escapeHtml(icon.label) + '</span> ' + escapeHtml(title) + (high ? ' <span class="event-star" title="应优先关注">⭐</span>' : '') + (reportBody ? ' <button class="report-body-btn" type="button" data-index="' + events.indexOf(e) + '">查看原文本</button>' : '') + '</div>' + aiMark + '</div>'
       + (detail ? '<div class="event-detail' + (collapsible ? ' is-collapsed' : '') + '">' + fullDetail + '</div>' : '')
+      + photoPreviews
       + (collapsible ? '<button class="event-detail-toggle" type="button">展开详情</button>' : '')
       + '</div></div>';
   }
@@ -366,6 +382,11 @@ function renderEventsTimeline() {
     const idx = Number(button.dataset.index);
     const event = eventsTimelineCache[idx];
     if (event && event.evidence && typeof event.evidence.body === 'string') showReportBody(event.evidence.body, eventDisplayTitle(event));
+  }));
+  container.querySelectorAll('.event-photo-thumb').forEach(button => button.addEventListener('click', () => {
+    const event = eventsTimelineCache?.[Number(button.dataset.eventIndex)];
+    const photo = event?.photo_previews?.[Number(button.dataset.photoIndex)];
+    if (photo && typeof window.openLifeLinkPhoto === 'function') window.openLifeLinkPhoto(photo);
   }));
 }
 

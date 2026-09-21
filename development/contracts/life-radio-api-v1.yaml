@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Life Link Context Sync API
-  version: 1.17.0
+  version: 1.17.1
   description: |
     Android、PC/Web 采集器与中央上下文服务之间的同步协议。
     所有时间均为 UTC ISO 8601（带 Z），持续时长单位为秒。
@@ -36,6 +36,7 @@ info:
     v1.15.5 增加周历业务日摘要读取；以共享跨日起点按互斥模块返回逻辑内容量，不改变认证、上传或 SQLite 数据。
     v1.16.0 增加中央权威的每日重复时间区间；它是用户主动安排而非采集事实，普通区间在业务日环中不得重叠，起止相同表示零时长时间锚。
     v1.17.0 增加来源设备隔离的照片同步：图片二进制只存中央 media/photos，SQLite 仅保存元数据、同步幂等状态和删除墓碑。设备只能读取、上传或删除自己的记录；确认同步按 sync_id 最多投影一次普通重要度文字汇总事件，AI 不获得图片二进制或 URL。
+    v1.17.1 为照片增加可选的 UTF-8 百分号编码来源标签；管理 WebUI 可在图库和同步事件中读取有限缩略图并打开原图，AI Reader 仍只获得文字汇总，不获得照片引用、URL 或图片内容。
 servers:
   - url: https://{host}
     variables:
@@ -1398,6 +1399,7 @@ paths:
         - {name: X-Photo-Sync-Id, in: header, required: true, schema: {type: string, format: uuid}}
         - {name: X-Photo-Captured-At, in: header, required: true, schema: {type: string, format: date-time}}
         - {name: X-Photo-Time-Source, in: header, required: true, schema: {type: string, enum: [captured, added]}}
+        - {name: X-Photo-Source-Label, in: header, required: false, description: UTF-8 百分号编码的本地来源应用或相册短标签，解码后最多 80 字符，缺失时中央使用“照片”, schema: {type: string, maxLength: 720}}
         - {name: X-Photo-Mime-Type, in: header, required: true, schema: {type: string, enum: [image/jpeg, image/png, image/webp, image/gif, image/heic]}}
         - {name: X-Photo-Width, in: header, required: true, schema: {type: integer, minimum: 1}}
         - {name: X-Photo-Height, in: header, required: true, schema: {type: integer, minimum: 1}}

@@ -19,11 +19,11 @@
 
 服务端的运行设置、设备凭据、公开入口、数据库、日志、媒体和运行身份统一保存在 `%USERPROFILE%\LifeLink\central`。源码版和任意发行目录共享这一份中央数据，不再把可变数据放进项目或程序目录。`LIFE_LINK_DATA_ROOT` 可为高级部署整体改写数据根目录。
 
-## 照片同步（v1.17）
+## 照片同步（v1.17.1）
 
 照片元数据、来源设备身份和删除墓碑保存在 SQLite；不可变图片字节只保存于同一中央数据目录的 `media/photos/`，绝不进入事件 payload 或 SQLite BLOB。`POST /v1/photos/{photo_id}/content` 只接受最多 20 MiB 的 JPEG、PNG、WebP、GIF 或 HEIC 二进制，并交叉验证 Content-Length、声明长度、SHA-256 和格式签名。设备只能查看、上传和删除其自身来源；删除只是中央副本墓碑，不影响手机相册。
 
-设备在逐项上传/删除后调用 `POST /v1/photos/sync-complete`，以稳定 `sync_id` 幂等生成一条不包含图片内容或 URL 的普通时间线汇总。公网映射若阻断 DELETE，Android 使用语义相同的 `POST /v1/photos/{photo_id}/delete`。完整请求头、分页和响应字段见 `development/contracts/life-radio-api-v1.yaml` 与 `development/contracts/fixtures/photo-sync-v1.json`。中央管理 WebUI 使用分页 `GET /api/photos`，图片内容与删除请求都必须附加 `source_device_id`，因为 `photo_id` 只在来源设备内唯一。
+设备在逐项上传/删除后调用 `POST /v1/photos/sync-complete`，以稳定 `sync_id` 幂等生成一条不包含图片内容或 URL 的普通时间线汇总。上传可携带本地来源应用或相册短标签；管理 WebUI 可在图库和该同步事件中显示有限缩略图并打开图片，但这些管理端引用不进入 AI Reader。公网映射若阻断 DELETE，Android 使用语义相同的 `POST /v1/photos/{photo_id}/delete`。完整请求头、分页和响应字段见 `development/contracts/life-radio-api-v1.yaml` 与 `development/contracts/fixtures/photo-sync-v1.json`。中央管理 WebUI 使用分页 `GET /api/photos`，图片内容与删除请求都必须附加 `source_device_id`，因为 `photo_id` 只在来源设备内唯一。
 
 `init` 使用系统安全随机数生成器创建不少于 32 字符的设备令牌，并在配置尚无 `read_token` 时自动生成一枚独立只读令牌。两类令牌只写入上述外部配置，不打印到终端、不写入服务日志，也不会写进仓库；重复执行 `init` 会保留已有 `read_token`。日常连接 PC 与 Android 时，不需要也不应手动复制令牌；请在中央管理 WebUI 生成 `LR1.` 设备配对码。外部配置中的凭据仅供中央服务自身和受控诊断使用。
 

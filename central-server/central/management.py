@@ -395,6 +395,7 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
                 self._require_exact_params(params, {"from", "to"})
                 start, end = parse_read_range(params["from"][0], params["to"][0])
                 payload = store.list_timeline(start, end)
+                self._add_photo_timeline_previews(payload)
                 conditional = True
             elif path in {"/api/usage", "/api/locations", "/api/health-info"}:
                 if set(params) not in (set(), {"date"}) or any(len(values) != 1 for values in params.values()):
@@ -554,7 +555,29 @@ class ManagementRequestHandler(BaseHTTPRequestHandler):
         except (OSError, ValueError, json.JSONDecodeError):
             self._send(502, {"error": "central_data_unavailable", "message": "central dashboard data is unavailable"})
             return
+        if path == "/api/dashboard/timeline-events":
+            self._add_photo_timeline_previews(payload)
         self._send(200, payload)
+
+    def _add_photo_timeline_previews(self, payload: Any) -> None:
+        """Attach bounded photo references only to the authenticated management projection."""
+        if not isinstance(payload, dict) or not isinstance(payload.get("events"), list):
+            return
+        for event in payload["events"]:
+            if not isinstance(event, dict) or event.get("event_key") != "photo.sync_confirmed":
+                continue
+            dedupe_key = event.get("dedupe_key")
+            source_device_id = event.get("source_device_id")
+            if not isinstance(dedupe_key, str) or not isinstance(source_device_id, str):
+                continue
+            prefix = f"photo-sync:{source_device_id}:"
+            if not dedupe_key.startswith(prefix):
+                continue
+            event["photo_previews"] = self.server.data_server.photos.sync_previews(
+                source_device_id,
+                dedupe_key.removeprefix(prefix),
+                limit=4,
+            )
 
     @staticmethod
     def _require_exact_params(params: dict[str, list[str]], names: set[str]) -> None:

@@ -17,16 +17,19 @@
   const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
   })[char]);
-  const formatDate = value => {
+  const formatTime = value => {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? String(value || '未知时间') : new Intl.DateTimeFormat('zh-CN', {
-      month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+      timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
     }).format(date);
   };
   const businessDateLabel = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))
     ? `${value.slice(0, 4)} 年 ${Number(value.slice(5, 7))} 月 ${Number(value.slice(8, 10))} 日`
     : '未归档日期';
   const photoKey = photo => `${photo.source_device_id || ''}:${photo.photo_id || ''}`;
+  const photoSourceLabel = photo => photo?.source_label && photo.source_label !== '照片'
+    ? photo.source_label
+    : (photo?.source_device_id || '照片');
 
   function setStatus(kind, text) {
     const target = byId('photos-status');
@@ -47,6 +50,41 @@
     const source = new URLSearchParams({source_device_id: String(photo.source_device_id || '')});
     return `/api/photos/${encodeURIComponent(photo.photo_id)}/content?${source}`;
   }
+  window.lifeLinkPhotoContentUrl = photoContentUrl;
+
+  function closePhotoViewer() {
+    document.querySelector('.photo-lightbox')?.remove();
+  }
+
+  function openPhotoViewer(photo) {
+    if (!photo || !photo.photo_id || !photo.source_device_id) return;
+    closePhotoViewer();
+    const overlay = document.createElement('div');
+    overlay.className = 'photo-lightbox';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', '照片查看器');
+    const image = document.createElement('img');
+    image.src = photoContentUrl(photo);
+    image.alt = `${formatTime(photo.captured_at)} ${photoSourceLabel(photo)}`;
+    const caption = document.createElement('div');
+    caption.className = 'photo-lightbox-caption';
+    caption.textContent = `${formatTime(photo.captured_at)} | ${photoSourceLabel(photo)}`;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'photo-lightbox-close';
+    close.setAttribute('aria-label', '关闭照片');
+    close.textContent = '×';
+    close.addEventListener('click', closePhotoViewer);
+    overlay.addEventListener('click', event => { if (event.target === overlay) closePhotoViewer(); });
+    overlay.append(image, caption, close);
+    document.body.appendChild(overlay);
+    close.focus();
+  }
+  window.openLifeLinkPhoto = openPhotoViewer;
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && document.querySelector('.photo-lightbox')) closePhotoViewer();
+  });
 
   function setupImageLazyLoad() {
     state.imageObserver?.disconnect();
@@ -110,7 +148,7 @@
     preview.className = 'photo-preview';
     if (photo.status === 'active') {
       const image = document.createElement('img');
-      image.alt = `来自 ${photo.source_device_id || '未知设备'} 的照片`;
+      image.alt = `${formatTime(photo.captured_at)} ${photoSourceLabel(photo)}`;
       image.loading = 'lazy';
       image.dataset.src = photoContentUrl(photo);
       image.addEventListener('error', () => {
@@ -118,6 +156,25 @@
         image.alt = '照片暂不可读取';
       }, {once: true});
       preview.appendChild(image);
+      preview.tabIndex = 0;
+      preview.setAttribute('role', 'button');
+      preview.setAttribute('aria-label', '查看照片');
+      preview.addEventListener('click', () => openPhotoViewer(photo));
+      preview.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openPhotoViewer(photo); }
+      });
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'photo-delete';
+      remove.textContent = '×';
+      remove.title = '删除中央副本';
+      remove.setAttribute('aria-label', '删除中央副本');
+      remove.addEventListener('click', event => {
+        event.stopPropagation();
+        deletePhoto(photo, remove);
+      });
+      preview.appendChild(remove);
     } else {
       preview.innerHTML = '<i data-lucide="trash-2"></i><span>中央副本已删除</span>';
     }
@@ -125,22 +182,10 @@
     body.className = 'photo-card-body';
     const meta = document.createElement('div');
     meta.className = 'photo-card-meta';
-    meta.innerHTML = `<span title="拍摄时间">${escapeHtml(formatDate(photo.captured_at))}</span><span class="photo-source" title="来源设备">${escapeHtml(photo.source_device_id || '未知设备')}</span>`;
+    const sourceLabel = photoSourceLabel(photo);
+    meta.textContent = `${formatTime(photo.captured_at)} | ${sourceLabel}`;
+    meta.title = `${formatTime(photo.captured_at)} | ${sourceLabel}`;
     body.appendChild(meta);
-    if (photo.time_source === 'added') {
-      const fallback = document.createElement('span');
-      fallback.className = 'photo-time-fallback';
-      fallback.textContent = '使用加入相册时间';
-      body.appendChild(fallback);
-    }
-    if (photo.status === 'active') {
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'photo-delete';
-      remove.textContent = '删除中央副本';
-      remove.addEventListener('click', () => deletePhoto(photo, remove));
-      body.appendChild(remove);
-    }
     card.append(preview, body);
     return card;
   }
@@ -190,7 +235,7 @@
   async function deletePhoto(photo, button) {
     const device = photo.source_device_id || '该设备';
     if (!window.confirm(`删除这张照片的中央副本吗？\n\n来源：${device}\n手机相册原图不会被删除。`)) return;
-    button.disabled = true; button.textContent = '正在删除…';
+    button.disabled = true; button.textContent = '…';
     try {
       const source = new URLSearchParams({source_device_id: String(photo.source_device_id || '')});
       await responseJson(await fetch(`/api/photos/${encodeURIComponent(photo.photo_id)}?${source}`, {method: 'DELETE'}));
@@ -198,7 +243,7 @@
       setStatus('success', '中央副本已删除；手机相册原图未受影响。');
       renderPhotos();
     } catch (error) {
-      button.disabled = false; button.textContent = '删除中央副本';
+      button.disabled = false; button.textContent = '×';
       setStatus('error', `删除失败：${error.message}`);
     }
   }

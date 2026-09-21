@@ -26,6 +26,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS photos (
  source_device_id TEXT NOT NULL, photo_id TEXT NOT NULL, captured_at TEXT NOT NULL,
  time_source TEXT NOT NULL CHECK(time_source IN ('captured','added')),
+ source_label TEXT NOT NULL DEFAULT '照片',
  mime_type TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
  byte_size INTEGER NOT NULL, sha256 TEXT NOT NULL, business_date TEXT NOT NULL,
  file_name TEXT, status TEXT NOT NULL CHECK(status IN ('active','deleted')),
@@ -62,6 +63,9 @@ class PhotoStore:
         self._lock = threading.RLock()
         with store._connection() as connection:
             connection.executescript(SCHEMA)
+            columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(photos)")}
+            if "source_label" not in columns:
+                connection.execute("ALTER TABLE photos ADD COLUMN source_label TEXT NOT NULL DEFAULT '照片'")
 
     def _business_date(self, captured_at: str) -> str:
         value = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
@@ -97,7 +101,13 @@ class PhotoStore:
     def upload(self, device_id: str, photo_id: str, metadata: dict[str, Any], data: bytes, sync_id: str) -> tuple[dict[str, Any], bool]:
         if not _uuid(photo_id) or not _uuid(sync_id): raise ValueError("photo_id and X-Photo-Sync-Id must be UUIDs")
         required = {"captured_at", "time_source", "mime_type", "width", "height", "byte_size", "sha256"}
-        if set(metadata) != required: raise ValueError("missing or invalid photo metadata")
+        allowed = required | {"source_label"}
+        if not required.issubset(metadata) or set(metadata) - allowed: raise ValueError("missing or invalid photo metadata")
+        source_label_supplied = "source_label" in metadata
+        source_label = metadata.get("source_label", "照片")
+        if not isinstance(source_label, str): raise ValueError("source_label must be text")
+        source_label = source_label.strip() or "照片"
+        if len(source_label) > 80: raise ValueError("source_label is too long")
         if metadata["mime_type"] not in ALLOWED_MIMES or metadata["time_source"] not in {"captured", "added"}: raise ValueError("unsupported image metadata")
         if not all(isinstance(metadata[k], int) and metadata[k] > 0 for k in ("width", "height", "byte_size")): raise ValueError("dimensions and byte_size must be positive integers")
         if metadata["byte_size"] != len(data) or len(data) > MAX_PHOTO_BYTES: raise ValueError("photo exceeds declared or maximum byte size")
@@ -120,15 +130,18 @@ class PhotoStore:
                     if not same: raise ValueError("photo_id conflicts with different immutable content")
                     if not target.exists():
                         self._write_atomic(target, data)
+                    if source_label_supplied and old["source_label"] != source_label:
+                        c.execute("UPDATE photos SET source_label=?, updated_at=? WHERE source_device_id=? AND photo_id=?", (source_label, now, device_id, photo_id))
+                        old = c.execute("SELECT * FROM photos WHERE source_device_id=? AND photo_id=?", (device_id, photo_id)).fetchone()
                     result = self._row(old); c.commit(); return result, False
                 # Publish the immutable bytes before exposing an active metadata
                 # row.  A failed database write may leave an unreferenced file,
                 # but can never leave a readable active row without content.
                 self._write_atomic(target, data)
-                c.execute("""INSERT INTO photos(source_device_id,photo_id,captured_at,time_source,mime_type,width,height,byte_size,sha256,business_date,file_name,status,created_at,updated_at,deleted_at)
-                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
-                  ON CONFLICT(source_device_id,photo_id) DO UPDATE SET captured_at=excluded.captured_at,time_source=excluded.time_source,mime_type=excluded.mime_type,width=excluded.width,height=excluded.height,byte_size=excluded.byte_size,sha256=excluded.sha256,business_date=excluded.business_date,file_name=excluded.file_name,status='active',updated_at=excluded.updated_at,deleted_at=NULL""",
-                  (device_id,photo_id,metadata["captured_at"],metadata["time_source"],metadata["mime_type"],metadata["width"],metadata["height"],len(data),digest,business_date,name,"active",now,now))
+                c.execute("""INSERT INTO photos(source_device_id,photo_id,captured_at,time_source,source_label,mime_type,width,height,byte_size,sha256,business_date,file_name,status,created_at,updated_at,deleted_at)
+                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
+                  ON CONFLICT(source_device_id,photo_id) DO UPDATE SET captured_at=excluded.captured_at,time_source=excluded.time_source,source_label=excluded.source_label,mime_type=excluded.mime_type,width=excluded.width,height=excluded.height,byte_size=excluded.byte_size,sha256=excluded.sha256,business_date=excluded.business_date,file_name=excluded.file_name,status='active',updated_at=excluded.updated_at,deleted_at=NULL""",
+                  (device_id,photo_id,metadata["captured_at"],metadata["time_source"],source_label,metadata["mime_type"],metadata["width"],metadata["height"],len(data),digest,business_date,name,"active",now,now))
                 c.execute("INSERT OR IGNORE INTO photo_sync_changes VALUES(?,?,?,?,?)", (sync_id,device_id,photo_id,"added",business_date))
                 row = c.execute("SELECT * FROM photos WHERE source_device_id=? AND photo_id=?", (device_id,photo_id)).fetchone(); c.commit()
             except Exception:
@@ -175,6 +188,20 @@ class PhotoStore:
         if row is None or row["status"] != "active" or not row["file_name"]: return None
         try: return (self.root / str(row["file_name"])).read_bytes(), str(row["mime_type"])
         except OSError: return None
+
+    def sync_previews(self, source_device_id: str, sync_id: str, *, limit: int = 4) -> list[dict[str, Any]]:
+        """Management-only references for a photo-sync timeline card; never used by AI readers."""
+        if not _uuid(sync_id) or not 1 <= limit <= 8: return []
+        with self.store._connection() as c:
+            rows = c.execute(
+                """SELECT p.source_device_id,p.photo_id,p.captured_at,p.source_label,p.width,p.height
+                   FROM photo_sync_changes AS ch
+                   JOIN photos AS p ON p.source_device_id=ch.source_device_id AND p.photo_id=ch.photo_id
+                   WHERE ch.sync_id=? AND ch.source_device_id=? AND ch.action='added' AND p.status='active'
+                   ORDER BY p.captured_at DESC,p.photo_id DESC LIMIT ?""",
+                (sync_id, source_device_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def complete(self, device_id: str, sync_id: str) -> dict[str, Any]:
         if not _uuid(sync_id): raise ValueError("sync_id must be UUID")

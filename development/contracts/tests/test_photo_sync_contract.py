@@ -14,7 +14,7 @@ class PhotoSyncContractTest(unittest.TestCase):
 
     def test_contract_exposes_source_scoped_binary_sync_and_compat_delete(self):
         for marker in (
-            "version: 1.17.0",
+            "version: 1.17.1",
             "/v1/photos:",
             "/v1/photos/{photo_id}/content:",
             "/v1/photos/{photo_id}:",
@@ -22,6 +22,7 @@ class PhotoSyncContractTest(unittest.TestCase):
             "/v1/photos/sync-complete:",
             "X-Photo-Sync-Id",
             "X-Photo-Captured-At",
+            "X-Photo-Source-Label",
             "current_business_date_added_count",
             "AI 不获得图片二进制或 URL",
         ):
@@ -34,6 +35,7 @@ class PhotoSyncContractTest(unittest.TestCase):
         self.assertNotIn('"device_token"', serialized.lower())
         self.assertNotIn("https://", serialized.lower())
         self.assertNotIn("data:image", serialized.lower())
+        self.assertEqual(self.fixture["upload"]["headers"]["X-Photo-Source-Label"], "%E6%88%AA%E5%9B%BE")
         self.assertEqual(self.fixture["complete_response"]["added_count"], 1)
 
 
