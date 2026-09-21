@@ -245,6 +245,9 @@ interface PhotoSyncSelectionDao {
     @Query("UPDATE photo_sync_selections SET pending_sync_id = :syncId WHERE photo_id IN (:photoIds)")
     suspend fun markPending(photoIds: List<String>, syncId: String)
 
+    @Query("UPDATE photo_sync_selections SET pending_sync_id = NULL, updated_at = :updatedAt WHERE photo_id IN (:photoIds)")
+    suspend fun clearPending(photoIds: List<String>, updatedAt: Long = System.currentTimeMillis())
+
     @Query("UPDATE photo_sync_selections SET central_state = :centralState, updated_at = :updatedAt WHERE photo_id = :photoId")
     suspend fun updateCentralState(photoId: String, centralState: String, updatedAt: Long = System.currentTimeMillis())
 }

@@ -27,8 +27,13 @@ data class CentralPhotoContentResponse(@Json(name = "photo") val photo: CentralP
 data class PhotoSyncCompleteRequest(@Json(name = "sync_id") val syncId: String)
 @JsonClass(generateAdapter = true)
 data class PhotoSyncCompleteResponse(@Json(name = "sync_id") val syncId: String, @Json(name = "added_count") val addedCount: Int, @Json(name = "current_business_date_added_count") val currentBusinessDateAddedCount: Int, @Json(name = "removed_count") val removedCount: Int, @Json(name = "business_date") val businessDate: String)
+@JsonClass(generateAdapter = true)
+private data class PhotoErrorResponse(val message: String? = null)
 
-sealed interface PhotoRequestResult<out T> { data class Success<T>(val value: T): PhotoRequestResult<T>; data class Failure(val message: String): PhotoRequestResult<Nothing> }
+sealed interface PhotoRequestResult<out T> {
+    data class Success<T>(val value: T): PhotoRequestResult<T>
+    data class Failure(val message: String, val mayHaveReachedServer: Boolean = false): PhotoRequestResult<Nothing>
+}
 
 /** Exact v1 photo contract client. It never uses DELETE because public HTTPS mappings may reject it. */
 class CentralPhotoClient(private val baseUrl: String, private val tokenProvider: () -> String?, private val http: OkHttpClient = OkHttpClient()) {
@@ -37,6 +42,7 @@ class CentralPhotoClient(private val baseUrl: String, private val tokenProvider:
     private val contentAdapter = moshi.adapter(CentralPhotoContentResponse::class.java)
     private val completeAdapter = moshi.adapter(PhotoSyncCompleteResponse::class.java)
     private val completeRequestAdapter = moshi.adapter(PhotoSyncCompleteRequest::class.java)
+    private val errorAdapter = moshi.adapter(PhotoErrorResponse::class.java)
 
     fun list(cursor: String?): PhotoRequestResult<CentralPhotoListResponse> = executeJson(
         Request.Builder().url("${baseUrl.trimEnd('/')}/v1/photos?limit=30&include_deleted=true" + (cursor?.let { "&cursor=${java.net.URLEncoder.encode(it, "UTF-8")}" } ?: "")).authorized().get().build(), listAdapter
@@ -66,10 +72,17 @@ class CentralPhotoClient(private val baseUrl: String, private val tokenProvider:
     private fun <T> executeJson(request: Request, adapter: com.squareup.moshi.JsonAdapter<T>): PhotoRequestResult<T> = try {
         http.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) PhotoRequestResult.Failure("中央照片服务返回 ${response.code}")
-            else adapter.fromJson(body)?.let { PhotoRequestResult.Success(it) } ?: PhotoRequestResult.Failure("中央照片服务响应无效")
+            if (!response.isSuccessful) {
+                val detail = runCatching { errorAdapter.fromJson(body)?.message }.getOrNull()
+                PhotoRequestResult.Failure(
+                    "中央照片服务返回 ${response.code}" + (detail?.takeIf { it.isNotBlank() }?.let { "：$it" } ?: "")
+                )
+            } else {
+                adapter.fromJson(body)?.let { PhotoRequestResult.Success(it) }
+                    ?: PhotoRequestResult.Failure("中央照片服务响应无效", mayHaveReachedServer = true)
+            }
         }
-    } catch (_: Exception) { PhotoRequestResult.Failure("暂时无法连接中央照片服务") }
+    } catch (_: Exception) { PhotoRequestResult.Failure("暂时无法连接中央照片服务", mayHaveReachedServer = true) }
 }
 
 data class PreparedPhotoCopy(val bytes: ByteArray, val mimeType: String, val width: Int, val height: Int, val sha256: String)

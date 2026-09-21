@@ -2344,7 +2344,9 @@ private fun PhotosTab(uiState: UiState, viewModel: MainViewModel, modifier: Modi
             Surface(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(), color = MaterialTheme.colorScheme.primaryContainer, tonalElevation = 4.dp) {
                 Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("新增 ${uiState.photoChangesAdditions} 张，移除 ${uiState.photoChangesRemovals} 张", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    Button(onClick = { viewModel.confirmPhotoChanges() }, enabled = !uiState.photoSyncing) { Text(if (uiState.photoSyncing) "同步中…" else "确认同步") }
+                    Button(onClick = { viewModel.confirmPhotoChanges() }, enabled = !uiState.photoSyncing) {
+                        Text(if (uiState.photoSyncing) "同步中…" else if (uiState.photoSyncPending) "重试同步" else "确认同步")
+                    }
                 }
             }
         }

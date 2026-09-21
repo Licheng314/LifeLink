@@ -176,6 +176,7 @@ data class UiState(
     ,val photoChangesRemovals: Int = 0
     ,val photoSyncMessage: String = ""
     ,val photoSyncing: Boolean = false
+    ,val photoSyncPending: Boolean = false
 )
 
 data class PhotoDisplay(val photo: AccessiblePhoto, val selection: PhotoSyncSelectionEntity?) {
@@ -322,9 +323,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var _triggerBaseUrl: String = settings.centralBaseUrl
     private var _triggerCreateRequestId: String? = null
     private var centralPhotoClient: CentralPhotoClient? = createPhotoClient()
+    private var _photoBaseUrl: String = settings.centralBaseUrl
     private var photoRefreshJob: kotlinx.coroutines.Job? = null
     private fun createPhotoClient(): CentralPhotoClient? = settings.centralBaseUrl.takeIf { it.isNotBlank() }?.let { url ->
         CentralPhotoClient(baseUrl = url, tokenProvider = { settings.getCentralToken() })
+    }
+
+    private fun ensurePhotoClient(): CentralPhotoClient? {
+        if (_photoBaseUrl != settings.centralBaseUrl || (centralPhotoClient == null && settings.centralBaseUrl.isNotBlank())) {
+            _photoBaseUrl = settings.centralBaseUrl
+            centralPhotoClient = createPhotoClient()
+        }
+        return centralPhotoClient
     }
 
     private fun createTriggerClient(): com.liferadio.sync.data.remote.CentralTriggerClient? {
@@ -674,7 +684,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val page = loaded.take(pageSize)
             // Central is authoritative for its own deletion state. An absent local MediaStore row is
             // never sent here and therefore cannot become a deletion request.
-                val client = centralPhotoClient ?: createPhotoClient()?.also { centralPhotoClient = it }
+                val client = ensurePhotoClient()
                 val remoteStates = mutableMapOf<String, String>()
                 if (client != null && settings.isCentralTokenConfigured) withContext(kotlinx.coroutines.Dispatchers.IO) {
                 var cursor: String? = null
@@ -717,10 +727,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val selections = if (page.isEmpty()) emptyMap() else dao.getByMediaStoreIds(page.map { it.mediaStoreId }).associateBy { it.mediaStoreId }
                 val displays = page.map { PhotoDisplay(it, selections[it.mediaStoreId]) }
-                val allDiff = photoSelectionDiff(dao.getAll())
+                val allSelections = dao.getAll()
+                val allDiff = photoSelectionDiff(allSelections)
+                val hasPending = allSelections.any { it.pendingSyncId != null }
                 _uiState.update { state ->
                     val combined = if (reset) displays else (state.photos + displays).distinctBy { it.photo.mediaStoreId }
-                    state.copy(photos = combined, photosHasMore = loaded.size > pageSize, photosLoading = false, photoLoadError = "", photoChangesAdditions = allDiff.additions, photoChangesRemovals = allDiff.removals)
+                    state.copy(
+                        photos = combined,
+                        photosHasMore = loaded.size > pageSize,
+                        photosLoading = false,
+                        photoLoadError = "",
+                        photoChangesAdditions = allDiff.additions,
+                        photoChangesRemovals = allDiff.removals,
+                        photoSyncPending = hasPending,
+                        photoSyncMessage = if (hasPending && state.photoSyncMessage.isBlank())
+                            "上次照片同步尚未完成，请点击下方“重试同步”。" else state.photoSyncMessage
+                    )
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -761,35 +783,142 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val selections = database.photoSyncSelectionDao().getAll()
             val diff = photoSelectionDiff(selections)
             if (!diff.hasChanges) return@launch
-            val client = centralPhotoClient ?: createPhotoClient()?.also { centralPhotoClient = it }
+            val client = ensurePhotoClient()
             if (client == null || !settings.isCentralTokenConfigured) { _uiState.update { it.copy(photoSyncMessage = "请先绑定中央服务", photoSyncing = false) }; return@launch }
             val changed = selections.filter { it.desiredSynced != it.confirmedSynced }
             val existingSyncIds = changed.mapNotNull { it.pendingSyncId }.distinct()
             if (existingSyncIds.size > 1) { _uiState.update { it.copy(photoSyncMessage = "照片同步正在整理，请稍后重试") }; return@launch }
             val syncId = existingSyncIds.singleOrNull() ?: java.util.UUID.randomUUID().toString().also { database.photoSyncSelectionDao().markPending(changed.map { selection -> selection.photoId }, it) }
-            _uiState.update { it.copy(photoSyncing = true, photoSyncMessage = "正在确认照片同步…") }
+            _uiState.update { it.copy(photoSyncing = true, photoSyncPending = true, photoSyncMessage = "正在确认照片同步…") }
             val visible = _uiState.value.photos.associateBy { it.selection?.photoId }
-            var failures = 0
-            for (selection in changed) {
-                val result = if (selection.desiredSynced) {
-                    val local = visible[selection.photoId]?.photo
-                    val copy = local?.let { PhotoUploadPreparer.prepare(getApplication(), it.uri) }
-                    if (local == null || copy == null) { failures++; continue } else client.upload(selection.photoId, local, copy, syncId)
-                } else client.delete(selection.photoId, syncId)
-                if (result !is PhotoRequestResult.Success) failures++
-            }
-            val completed = if (failures == 0) client.complete(syncId) else PhotoRequestResult.Failure("仍有上传或删除失败")
-            if (completed is PhotoRequestResult.Success) {
-                changed.filter { it.desiredSynced }.map { it.photoId }.takeIf { it.isNotEmpty() }?.let {
-                    database.photoSyncSelectionDao().markConfirmed(it, "active")
+            val failureMessages = mutableListOf<String>()
+            var successfulOperations = 0
+            var uncertainFailure = false
+            withContext(kotlinx.coroutines.Dispatchers.IO) {
+                for (selection in changed) {
+                    val result = if (selection.desiredSynced) {
+                        val local = visible[selection.photoId]?.photo
+                        val copy = local?.let { PhotoUploadPreparer.prepare(getApplication(), it.uri) }
+                        if (local == null || copy == null) {
+                            PhotoRequestResult.Failure("无法读取或处理所选照片，请确认照片仍可访问")
+                        } else {
+                            client.upload(selection.photoId, local, copy, syncId)
+                        }
+                    } else {
+                        client.delete(selection.photoId, syncId)
+                    }
+                    when (result) {
+                        is PhotoRequestResult.Success -> successfulOperations++
+                        is PhotoRequestResult.Failure -> {
+                            failureMessages += result.message
+                            uncertainFailure = uncertainFailure || result.mayHaveReachedServer
+                        }
+                    }
                 }
-                changed.filterNot { it.desiredSynced }.map { it.photoId }.takeIf { it.isNotEmpty() }?.let {
-                    database.photoSyncSelectionDao().markConfirmed(it, "deleted")
+            }
+
+            if (existingSyncIds.isNotEmpty() && successfulOperations == 0 && !uncertainFailure) {
+                when (val probe = withContext(kotlinx.coroutines.Dispatchers.IO) { loadAllCentralPhotoStates(client) }) {
+                    is PhotoRequestResult.Success -> {
+                        val anyTargetReached = changed.any { selection ->
+                            if (selection.desiredSynced) probe.value[selection.photoId] == "active"
+                            else probe.value[selection.photoId] != "active"
+                        }
+                        if (!anyTargetReached) {
+                            database.photoSyncSelectionDao().clearPending(changed.map { it.photoId })
+                            refreshPhotos(reset = true)
+                            _uiState.update {
+                                it.copy(
+                                    photoSyncing = false,
+                                    photoSyncPending = false,
+                                    photoSyncMessage = "同步失败：${failureMessages.firstOrNull() ?: "照片处理失败"}。已解除锁定，可以重新选择后再试。"
+                                )
+                            }
+                            return@launch
+                        }
+                    }
+                    is PhotoRequestResult.Failure -> {
+                        refreshPhotos(reset = true)
+                        _uiState.update {
+                            it.copy(
+                                photoSyncing = false,
+                                photoSyncPending = true,
+                                photoSyncMessage = "暂时无法核对上次同步状态：${probe.message}。请稍后点击“重试同步”。"
+                            )
+                        }
+                        return@launch
+                    }
+                }
+            }
+
+            // A first attempt that failed before contacting the server is safe to release
+            // immediately. A retry may already have partially reached the server, so it must
+            // finish the existing sync and reconcile against central state.
+            val shouldComplete = existingSyncIds.isNotEmpty() || successfulOperations > 0 || uncertainFailure
+            if (!shouldComplete) {
+                database.photoSyncSelectionDao().clearPending(changed.map { it.photoId })
+                refreshPhotos(reset = true)
+                _uiState.update {
+                    it.copy(
+                        photoSyncing = false,
+                        photoSyncPending = false,
+                        photoSyncMessage = "同步失败：${failureMessages.firstOrNull() ?: "照片处理失败"}。已解除锁定，可以重新选择后再试。"
+                    )
+                }
+                return@launch
+            }
+
+            val completed = withContext(kotlinx.coroutines.Dispatchers.IO) { client.complete(syncId) }
+            if (completed is PhotoRequestResult.Success) {
+                val remoteStates = withContext(kotlinx.coroutines.Dispatchers.IO) { loadAllCentralPhotoStates(client) }
+                if (remoteStates is PhotoRequestResult.Success) {
+                    val confirmedActive = changed.filter { it.desiredSynced && remoteStates.value[it.photoId] == "active" }.map { it.photoId }
+                    val confirmedDeleted = changed.filter { !it.desiredSynced && remoteStates.value[it.photoId] != "active" }.map { it.photoId }
+                    val resolvedIds = (confirmedActive + confirmedDeleted).toSet()
+                    confirmedActive.takeIf { it.isNotEmpty() }?.let { database.photoSyncSelectionDao().markConfirmed(it, "active") }
+                    confirmedDeleted.takeIf { it.isNotEmpty() }?.let { database.photoSyncSelectionDao().markConfirmed(it, "deleted") }
+                    changed.map { it.photoId }.filterNot { it in resolvedIds }.takeIf { it.isNotEmpty() }?.let {
+                        database.photoSyncSelectionDao().clearPending(it)
+                    }
+                    refreshPhotos(reset = true)
+                    val unresolved = changed.size - resolvedIds.size
+                    _uiState.update {
+                        it.copy(
+                            photoSyncing = false,
+                            photoSyncPending = false,
+                            photoSyncMessage = if (unresolved == 0)
+                                "已确认：新增 ${completed.value.addedCount} 张，移除 ${completed.value.removedCount} 张"
+                            else "已完成可同步的照片，另有 $unresolved 张未成功；已解除锁定，可重新选择后再试。"
+                        )
+                    }
+                    return@launch
                 }
             }
             refreshPhotos(reset = true)
-            _uiState.update { it.copy(photoSyncing = false, photoSyncMessage = when (completed) { is PhotoRequestResult.Success -> "已确认：新增 ${completed.value.addedCount} 张，移除 ${completed.value.removedCount} 张"; else -> if (failures > 0) "有 $failures 张未完成，将保留变更后重试" else "同步确认暂未完成，将自动重试" }) }
+            val completionMessage = (completed as? PhotoRequestResult.Failure)?.message
+            _uiState.update {
+                it.copy(
+                    photoSyncing = false,
+                    photoSyncPending = true,
+                    photoSyncMessage = "同步尚未完成：${completionMessage ?: failureMessages.firstOrNull() ?: "暂时无法核对中央状态"}。请点击“重试同步”。"
+                )
+            }
         }
+    }
+
+    private fun loadAllCentralPhotoStates(client: CentralPhotoClient): PhotoRequestResult<Map<String, String>> {
+        val states = mutableMapOf<String, String>()
+        var cursor: String? = null
+        do {
+            when (val result = client.list(cursor)) {
+                is PhotoRequestResult.Success -> {
+                    result.value.photos.forEach { states[it.photoId] = it.status }
+                    cursor = result.value.nextCursor
+                }
+                is PhotoRequestResult.Failure -> return result
+            }
+        } while (cursor != null)
+        return PhotoRequestResult.Success(states)
     }
 
     fun openCentralWebUi() {
