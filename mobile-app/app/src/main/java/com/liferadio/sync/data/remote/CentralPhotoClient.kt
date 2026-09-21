@@ -93,7 +93,13 @@ object PhotoUploadPreparer {
     const val MAX_BYTES = 8 * 1024 * 1024
     fun prepare(context: Context, uri: Uri): PreparedPhotoCopy? = runCatching {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+        val boundsRead = context.contentResolver.openInputStream(uri)?.use {
+            // decodeStream deliberately returns null when inJustDecodeBounds is true; the
+            // dimensions and MIME metadata in Options are the success signal.
+            BitmapFactory.decodeStream(it, null, bounds)
+            bounds.outWidth > 0 && bounds.outHeight > 0
+        } ?: false
+        if (!boundsRead) return null
         var sample = 1
         while (bounds.outWidth / sample > MAX_EDGE * 2 || bounds.outHeight / sample > MAX_EDGE * 2) sample *= 2
         val bitmap = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) } ?: return null
