@@ -42,15 +42,16 @@ data class AccessiblePhoto(
  * feature switch and [PhotoPermissionScope]; disappearing rows never modify desired sync state.
  */
 class MediaStorePhotoReader(private val context: Context) {
+    private val projection = arrayOf(
+        MediaStore.Images.Media._ID, MediaStore.Images.Media.DATE_TAKEN,
+        MediaStore.Images.Media.DATE_ADDED, MediaStore.Images.Media.MIME_TYPE,
+        MediaStore.Images.Media.WIDTH, MediaStore.Images.Media.HEIGHT, MediaStore.Images.Media.SIZE
+    )
+
     fun loadPage(dayStartHour: Int, limit: Int, offset: Int): List<AccessiblePhoto> {
         if (photoPermissionScope(context) == PhotoPermissionScope.NONE) return emptyList()
         val safeLimit = limit.coerceIn(1, 200)
         val safeOffset = offset.coerceAtLeast(0)
-        val projection = arrayOf(
-            MediaStore.Images.Media._ID, MediaStore.Images.Media.DATE_TAKEN,
-            MediaStore.Images.Media.DATE_ADDED, MediaStore.Images.Media.MIME_TYPE,
-            MediaStore.Images.Media.WIDTH, MediaStore.Images.Media.HEIGHT, MediaStore.Images.Media.SIZE
-        )
         val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         // MediaStore providers are allowed to ignore structured sort arguments. Several OEM
         // providers honor LIMIT/OFFSET but return their default (oldest-first) order, which makes
@@ -59,6 +60,21 @@ class MediaStorePhotoReader(private val context: Context) {
         return context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
             readNewestPage(cursor, dayStartHour, safeLimit, safeOffset)
         }.orEmpty()
+    }
+
+    fun loadByMediaStoreIds(dayStartHour: Int, mediaStoreIds: Collection<Long>): List<AccessiblePhoto> {
+        if (photoPermissionScope(context) == PhotoPermissionScope.NONE || mediaStoreIds.isEmpty()) return emptyList()
+        val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        return mediaStoreIds.distinct().chunked(200).flatMap { ids ->
+            val placeholders = ids.joinToString(",") { "?" }
+            context.contentResolver.query(
+                uri,
+                projection,
+                "${MediaStore.Images.Media._ID} IN ($placeholders)",
+                ids.map { it.toString() }.toTypedArray(),
+                null
+            )?.use { cursor -> readNewestPage(cursor, dayStartHour, ids.size, 0) }.orEmpty()
+        }
     }
 
     private fun readNewestPage(

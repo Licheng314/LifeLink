@@ -790,14 +790,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (existingSyncIds.size > 1) { _uiState.update { it.copy(photoSyncMessage = "照片同步正在整理，请稍后重试") }; return@launch }
             val syncId = existingSyncIds.singleOrNull() ?: java.util.UUID.randomUUID().toString().also { database.photoSyncSelectionDao().markPending(changed.map { selection -> selection.photoId }, it) }
             _uiState.update { it.copy(photoSyncing = true, photoSyncPending = true, photoSyncMessage = "正在确认照片同步…") }
-            val visible = _uiState.value.photos.associateBy { it.selection?.photoId }
+            val visibleOnPage = _uiState.value.photos.associate { display ->
+                (display.selection?.photoId ?: stablePhotoId(display.photo.mediaStoreId)) to display.photo
+            }
+            val missingMediaStoreIds = changed.filterNot { it.photoId in visibleOnPage }.map { it.mediaStoreId }
+            val recoveredPhotos = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                MediaStorePhotoReader(getApplication()).loadByMediaStoreIds(_uiState.value.sharedDayStartHour, missingMediaStoreIds)
+            }
+            val visible = visibleOnPage + recoveredPhotos.associateBy { stablePhotoId(it.mediaStoreId) }
             val failureMessages = mutableListOf<String>()
             var successfulOperations = 0
             var uncertainFailure = false
             withContext(kotlinx.coroutines.Dispatchers.IO) {
                 for (selection in changed) {
                     val result = if (selection.desiredSynced) {
-                        val local = visible[selection.photoId]?.photo
+                        val local = visible[selection.photoId]
                         val copy = local?.let { PhotoUploadPreparer.prepare(getApplication(), it.uri) }
                         if (local == null || copy == null) {
                             PhotoRequestResult.Failure("无法读取或处理所选照片，请确认照片仍可访问")
