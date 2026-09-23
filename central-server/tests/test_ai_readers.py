@@ -1,5 +1,6 @@
 import hashlib
 import http.client
+import io
 import json
 import sqlite3
 import tempfile
@@ -11,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from unittest import mock
+
+from PIL import Image
 
 from central.ai_readers import CLAIM_SCHEMA, _arguments_contain_path_segments, is_loopback_address
 from central.config import CentralConfig
@@ -186,6 +189,49 @@ class AIReaderTests(unittest.TestCase):
             )
             connection.commit()
         return event_id
+
+    def test_photo_delivery_pages_without_advancing_main_cursor_or_update_flag(self):
+        _, profile = self.create_and_claim(instance_id="photo-reader")
+        # Generate a valid PNG; the server must re-encode it as a metadata-free JPEG.
+        image_buffer = io.BytesIO()
+        Image.new("RGB", (1, 1), (0, 200, 120)).save(image_buffer, format="PNG")
+        image = image_buffer.getvalue()
+        sync_id = str(uuid.uuid4())
+        for index in range(5):
+            photo_id = str(uuid.uuid4())
+            captured_at = f"2026-09-22T0{index}:00:00Z"
+            metadata = {"captured_at": captured_at, "time_source": "captured", "source_label": "相机", "mime_type": "image/png", "width": 1, "height": 1, "byte_size": len(image), "sha256": hashlib.sha256(image).hexdigest()}
+            self.server.photos.upload("bootstrap-device", photo_id, metadata, image, sync_id)
+        completed = self.server.photos.complete("bootstrap-device", sync_id)
+        status, initial, _ = self.request("GET", "/v1/read/ai/context?include_images=true", token=profile["access_token"])
+        self.assertEqual(status, 200, initial)
+        self.assertIn("next_cursor", initial)
+        delivery = initial["photo_delivery"]
+        self.assertEqual(len(delivery["items"]), 4)
+        self.assertEqual(delivery["total"], 5)
+        self.assertEqual(delivery["status"], "in_progress")
+        self.assertTrue(all(item["content_type"] == "image/jpeg" and "photo_id" not in item for item in delivery["items"]))
+        self.assertTrue(any("拍摄于" in event["text"] and "来源：相机" in event["text"] for event in initial["events"]))
+        with closing(sqlite3.connect(self.database)) as connection:
+            stored_page = connection.execute("SELECT response_json FROM ai_reader_photo_pages").fetchone()[0]
+        self.assertNotIn("data_base64", stored_page)
+        first_page = delivery["photo_page"]
+        status, continued, _ = self.request("GET", f"/v1/read/ai/context?include_images=true&photo_page={first_page}", token=profile["access_token"])
+        self.assertEqual(status, 200, continued)
+        self.assertEqual(set(continued), {"photo_delivery"})
+        self.assertEqual(continued["photo_delivery"]["delivered"], 5)
+        self.assertEqual(continued["photo_delivery"]["status"], "complete")
+        status, retried, _ = self.request("GET", f"/v1/read/ai/context?include_images=true&photo_page={first_page}", token=profile["access_token"])
+        self.assertEqual(status, 200, retried)
+        self.assertEqual(retried, continued)
+        status, updates, _ = self.request("GET", f"/v1/read/ai/updates?{urlencode({'cursor': initial['next_cursor']})}", token=profile["access_token"])
+        self.assertEqual(status, 200, updates)
+        self.assertFalse(updates["update_mcp"])
+        start = datetime.now(timezone.utc) - timedelta(days=1)
+        end = datetime.now(timezone.utc) + timedelta(days=1)
+        timeline = self.server.store.list_timeline(start, end)
+        event = next(item for item in timeline["events"] if item["timeline_event_id"] == completed["timeline_event_id"])
+        self.assertEqual(event["ai_reader"]["photo_delivery"], {"total": 5, "delivered": 5, "unavailable": 0, "status": "complete"})
 
     def test_update_flag_tracks_unread_high_priority_events_without_advancing_cursor(self):
         _, profile = self.create_and_claim(instance_id="update-reader")

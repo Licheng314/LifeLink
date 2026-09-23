@@ -550,18 +550,35 @@ class LifeLinkReader:
             raise LifeLinkMCPError("state_unreadable", "Life Link MCP state was not saved")
         return loaded
 
-    def read_context(self, client_info: dict[str, Any], *, view: str = "compact") -> dict[str, Any]:
+    def read_context(
+        self, client_info: dict[str, Any], *, view: str = "compact",
+        include_images: bool = False, photo_page: str | None = None,
+    ) -> dict[str, Any]:
         if view not in {"compact", "full"}:
             raise LifeLinkMCPError("invalid_arguments", "view must be compact or full")
+        if not isinstance(include_images, bool):
+            raise LifeLinkMCPError("invalid_arguments", "include_images must be boolean")
+        if photo_page is not None:
+            if not isinstance(photo_page, str) or not photo_page:
+                raise LifeLinkMCPError("invalid_arguments", "photo_page must be a non-empty opaque string")
+            if not include_images:
+                raise LifeLinkMCPError("invalid_arguments", "photo_page requires include_images=true")
         state = self.state_store.load() or self.pair(client_info)
         if state.get("disabled_reason"):
             raise LifeLinkMCPError("connection_disabled", "Life Link connection requires a new pairing")
         secret = dict(state["secret"])
-        params: dict[str, str] = {"view": view}
-        if secret.get("next_cursor"):
-            params["cursor"] = str(secret["next_cursor"])
-        if secret.get("understanding_version"):
-            params["understanding_version"] = str(secret["understanding_version"])
+        if photo_page is not None:
+            # Do not even send the main timeline position on this distinct read
+            # path: the opaque photo page is its only continuation state.
+            params: dict[str, str] = {"include_images": "true", "photo_page": photo_page}
+        else:
+            params = {"view": view}
+            if secret.get("next_cursor"):
+                params["cursor"] = str(secret["next_cursor"])
+            if secret.get("understanding_version"):
+                params["understanding_version"] = str(secret["understanding_version"])
+            if include_images:
+                params["include_images"] = "true"
 
         def request_context(active_params: dict[str, str]) -> tuple[int, dict[str, Any]]:
             return self.http_json(
@@ -570,6 +587,25 @@ class LifeLinkReader:
             )
 
         status, payload = request_context(params)
+        # A photo-page request is deliberately separate from timeline delivery.  Its
+        # response does not contain (and must never replace) the main cursor or the
+        # understanding version saved by a normal context read.
+        if photo_page is not None:
+            if status == 401:
+                self.state_store.save(
+                    central_instance_id=str(state["central_instance_id"]),
+                    reader=dict(state["reader"]), secret=secret,
+                    created_at=str(state["created_at"]), disabled_reason="token_invalid",
+                )
+                raise LifeLinkMCPError("token_invalid", "Life Link connection requires a new pairing", http_status=401)
+            if status != 200:
+                raise LifeLinkMCPError(
+                    str(payload.get("error") or "photo_page_read_failed"),
+                    "Life Link photo page read failed", http_status=status,
+                )
+            if not isinstance(payload.get("photo_delivery"), dict):
+                raise LifeLinkMCPError("invalid_central_response", "Life Link photo page response is incomplete")
+            return payload
         if status in {409, 410} and "cursor" in params:
             params.pop("cursor", None)
             secret["next_cursor"] = None
@@ -649,7 +685,15 @@ TOOLS = [
                 "view": {
                     "type": "string", "enum": ["compact", "full"], "default": "compact",
                     "description": "默认 compact；只有确实需要内部结构时才使用 full。",
-                }
+                },
+                "include_images": {
+                    "type": "boolean", "default": False,
+                    "description": "默认仅返回文字和照片元数据。设为 true 时，最多附带 4 张照片预览图。",
+                },
+                "photo_page": {
+                    "type": "string",
+                    "description": "中央签发的不透明图片续页；只能与 include_images=true 一起使用，且不会重复事件或推进主游标。",
+                },
             },
             "additionalProperties": False,
         },
@@ -661,11 +705,49 @@ TOOLS = [
 ]
 
 
+def _photo_delivery_for_mcp(payload: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Keep preview base64 out of JSON while turning valid previews into MCP blocks."""
+    safe_payload = dict(payload)
+    delivery = payload.get("photo_delivery")
+    if not isinstance(delivery, dict):
+        return safe_payload, []
+    safe_delivery = dict(delivery)
+    raw_items = delivery.get("items")
+    safe_items: list[Any] = []
+    images: list[dict[str, str]] = []
+    if isinstance(raw_items, list):
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                safe_items.append(raw_item)
+                continue
+            item = dict(raw_item)
+            image_data = item.pop("data_base64", None)
+            safe_items.append(item)
+            content_type = item.get("content_type")
+            if not isinstance(image_data, str) or not isinstance(content_type, str):
+                continue
+            try:
+                base64.b64decode(image_data, validate=True)
+            except (ValueError, TypeError):
+                continue
+            captured_at = str(item.get("captured_at") or "unknown time")
+            source_label = str(item.get("source_label") or "unknown source")
+            sequence = str(item.get("sequence") or "?")
+            images.extend((
+                {"type": "text", "text": f"图片 {sequence}：拍摄于 {captured_at}；来源：{source_label}。"},
+                {"type": "image", "data": image_data, "mimeType": content_type},
+            ))
+    safe_delivery["items"] = safe_items
+    safe_payload["photo_delivery"] = safe_delivery
+    return safe_payload, images
+
+
 def _tool_result(payload: dict[str, Any], *, is_error: bool = False) -> dict[str, Any]:
-    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    safe_payload, images = _photo_delivery_for_mcp(payload)
+    serialized = json.dumps(safe_payload, ensure_ascii=False, separators=(",", ":"))
     return {
-        "content": [{"type": "text", "text": serialized}],
-        "structuredContent": payload,
+        "content": [{"type": "text", "text": serialized}, *images],
+        "structuredContent": safe_payload,
         "isError": is_error,
     }
 
@@ -722,11 +804,14 @@ class MCPServer:
                 if name == "lifelink_check_updates":
                     return self._result(request_id, _tool_result(self.reader.check_updates()))
                 if name == "lifelink_read_context":
-                    unexpected = set(arguments) - {"view"}
+                    unexpected = set(arguments) - {"view", "include_images", "photo_page"}
                     if unexpected:
                         return self._error(request_id, -32602, "Unknown tool arguments")
                     payload = self.reader.read_context(
-                        self.client_info, view=str(arguments.get("view") or "compact"),
+                        self.client_info,
+                        view=str(arguments.get("view") or "compact"),
+                        include_images=arguments.get("include_images", False),
+                        photo_page=arguments.get("photo_page"),
                     )
                     return self._result(request_id, _tool_result(payload))
                 return self._error(request_id, -32602, f"Unknown tool: {name}")

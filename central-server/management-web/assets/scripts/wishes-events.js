@@ -326,6 +326,30 @@ function eventPhotoPreviewsHtml(event, eventIndex) {
   const remaining = Math.max(0, total - photos.length);
   return '<div class="event-photo-previews">' + images + (remaining ? '<span class="event-photo-more">另有 ' + remaining + ' 张</span>' : '') + '</div>';
 }
+function photoDeliveryProgressText(event, aiState) {
+  if (event?.event_key !== 'photo.sync_confirmed' || aiState !== 'served') return '已推送';
+  const delivery = event.ai_reader?.photo_delivery;
+  if (!delivery || typeof delivery !== 'object') return '已推送';
+
+  // Prefer the timeline contract names; retain the current internal aliases
+  // while an older central service is still serving a cached timeline.
+  const deliveredCount = Number(delivery.delivered_count ?? delivery.delivered);
+  const totalCount = Number(delivery.total_count ?? delivery.total);
+  if (!Number.isInteger(deliveredCount) || !Number.isInteger(totalCount) || deliveredCount < 0 || totalCount <= 0) {
+    return '已推送';
+  }
+  const progress = `${Math.min(deliveredCount, totalCount)}/${totalCount}`;
+  switch (delivery.status) {
+    case 'in_progress':
+      return `已推送；图片传输中 ${progress}`;
+    case 'complete':
+      return `已推送；图片传输完成 ${progress}`;
+    case 'failed':
+      return `已推送；图片传输失败 ${progress}`;
+    default:
+      return '已推送';
+  }
+}
 function renderEventsTimeline() {
   const container = document.getElementById('events-timeline-container');
   if (!container) return;
@@ -355,8 +379,9 @@ function renderEventsTimeline() {
     const photoPreviews = eventPhotoPreviewsHtml(e, events.indexOf(e));
     const aiState = e.importance === 'low' ? 'not_applicable' : (e.ai_reader?.state || 'not_served');
     const aiName = e.ai_reader?.reader_display_name || '';
+    const aiServedText = photoDeliveryProgressText(e, aiState);
     const aiMark = aiState === 'served'
-      ? '<span class="event-ai-mark served" title="已推送给 ' + escapeHtml(aiName || 'AI') + '" aria-label="已推送给 ' + escapeHtml(aiName || 'AI') + '">已推送</span>'
+      ? '<span class="event-ai-mark served' + (aiServedText !== '已推送' ? ' photo-delivery' : '') + '" title="' + escapeHtml(aiServedText) + '给 ' + escapeHtml(aiName || 'AI') + '" aria-label="' + escapeHtml(aiServedText) + '给 ' + escapeHtml(aiName || 'AI') + '">' + escapeHtml(aiServedText) + '</span>'
       : (aiState === 'not_applicable'
         ? ''
         : '<span class="event-ai-mark pending" title="' + (aiName ? '待推送给 ' + escapeHtml(aiName) : '尚未连接 AI') + '" aria-label="' + (aiName ? '待推送给 ' + escapeHtml(aiName) : '尚未连接 AI') + '">待推送</span>');

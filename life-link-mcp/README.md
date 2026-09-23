@@ -8,7 +8,7 @@ Life Link MCP 是面向本地 AI 伴侣的只读 stdio 适配程序。AI 宿主�
 
 - `lifelink_connection_status`：只检查本地配对状态，不访问上下文、不推进游标。
 - `lifelink_check_updates`：轻量检查尚未读取的高优先级提醒和报告；返回 `update_mcp=true` 时再读取上下文。检查本身不返回正文、不推进游标。
-- `lifelink_read_context`：首次调用自动使用连接包中的一次性凭据完成配对，后续按保存的游标读取增量事件；默认使用 `compact`，可显式请求 `full`。
+- `lifelink_read_context`：首次调用自动使用连接包中的一次性凭据完成配对，后续按保存的游标读取增量事件；默认使用 `compact`，可显式请求 `full`。`include_images=false` 为默认纯文字模式；设为 `true` 时，结果会在文字和结构化元数据之后附带最多四张预览图。图片较多时，将中央返回的不透明 `photo_page` 连同 `include_images=true` 传回同一工具继续读取；续页不重复背景或事件，也不会推进本地保存的主游标。
 
 连接包中的 `reader.json` 是通用稳定身份文件。目标 AI 可以填写自己的显示名；能够准确确认同机 Windows 进程时，可以按现役 Skill 规则加入 `process_binding`。共享宿主绑定必须来自当前真实运行进程的命令行，不能根据安装目录或推测的入口文件猜测；OpenClaw 通常可使用 `node.exe + node_modules/openclaw`，但仍以实际命令行为准。必须在首次 `lifelink_read_context` 前完成配置，因为首次读取会领取一次性配对并固定 Reader 绑定。MCP 程序只校验和提交该身份，不识别具体 AI 应用。
 

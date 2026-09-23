@@ -15,7 +15,7 @@
 
 ## 上下文读取
 
-`GET /v1/read/ai/context` 使用 `aiReaderAuth`，可选参数为 `business_date`、`cursor`、`understanding_version` 和 `view`。
+`GET /v1/read/ai/context` 使用 `aiReaderAuth`，可选参数为 `business_date`、`cursor`、`understanding_version`、`view`、`include_images` 和 `photo_page`。
 
 省略 `view` 或使用 `view=compact` 时返回简短表达：背景和有效实时项压成文字数组，每条事件只保留 `at`、`importance` 和中央正文，事件时间明确转换为 `Asia/Shanghai` 的 `+08:00` ISO 时间；事件 ID、key、内部 evidence、delivery、统计窗口和去重键只在 compact 响应中省略。报告仍完整使用冻结的 `evidence.body`。只有显式使用 `view=full` 才返回完整结构。
 
@@ -26,6 +26,13 @@
 - `importance_counts` 是本次返回事件的 `high`、`normal`、`low` 数量；`next_cursor` 是中央签发的不透明值。
 - 响应不得包含客户端原始采集事件、原始 GPS、SQLite、设备凭据、AI Token 或共享写权限。实时背景只遵守现有 `include_in_ai` 规则。
 
+### 照片同步预览
+
+- `include_images` 默认 `false`。默认/纯文字读取保持原有响应、游标和 `served` 语义；照片同步事件会在其文字中列出照片的拍摄时间和来源标签，不声称 AI 已理解图片。
+- `include_images=true` 仍是同一个 context 读取。只有本次返回的 `photo.sync_confirmed` 事件有可投递照片时，响应额外含 `photo_delivery`：`items` 是本批最多 4 张、按稳定顺序排列的 JPEG 预览；每项只含 `sequence`、拍摄时间、来源标签、MIME 和 base64 数据，不暴露内部 photo_id、文件名、URL 或 hash。`delivered`、`total`、`unavailable` 和 `status` 是事件级投递进度聚合。
+- 中央按需生成、缓存最长边 1600 的 JPEG；小图不放大、移除元数据。不做 OCR、描述、内容判断或 HEIF 插件解码。已删除、文件丢失或 Pillow 无法解码的原图计入 `unavailable`，文字事件仍成功；因此 `status=complete` 可以同时有 `delivered < total`。
+- `photo_page` 是中央签发、绑定 reader 与 epoch 的不透明续页值。续页必须带 `include_images=true&photo_page=...`，只返回 `{photo_delivery}`，不重复背景/事件、不签发或推进 `next_cursor`，且可安全重试。非法、过期或旧 epoch 的错误与主游标相同。
+
 ## 游标
 
 - 游标由中央签发，绑定 `reader_id` 和该 reader 当前 cursor epoch；调用方不得解析、拼接或从时间戳自行构造。
@@ -33,6 +40,7 @@
 - 游标同时绑定业务日。携带上一业务日游标跨过共享跨日边界后，中央自动切换到当前业务日，从当前业务日开头提供事件并签发新游标；不会提供上一业务日尚未读取的事件。
 - 同一业务日内，游标只提供该业务日范围中在游标位置之后新创建的事件。服务恢复后补生成但 `occurred_at` 属于其他业务日的事件不会混入当前列表。
 - reader 重新配对或用户执行“清理标记”后 epoch 变化，旧 epoch 的有效游标返回 `409 cursor_superseded`。AI 必须丢弃旧游标并自动无游标重试一次；用户不经手游标。无游标重试只重新获取当前业务日，不提供“跳过积压”模式。
+- 照片续页不属于主时间线游标，也不会使 `GET /v1/read/ai/updates` 返回 `update_mcp=true`。`served` 仍仅表示中央已成功提供普通上下文响应。
 
 ## 管理与访问记录
 

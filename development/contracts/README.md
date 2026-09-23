@@ -4,15 +4,15 @@
 
 ## 当前状态
 
-- `life-radio-api-v1.yaml`：Android、PC 客户端与中央上下文服务的共享同步协议；当前 v1.17.1。时间线支持 ETag 条件校验，PC 小窗与 WebUI 可共享完整业务日缓存；AI reader 个人模式只保持一个有效连接，理解说明先于事实内容。`GET /v1/calendar-days` 以共享业务日起点返回最多 42 个含首含尾日期的逻辑内容量；它接受独立只读或已注册设备凭据，模块互斥，且不把 SQLite 文件占用当作内容量。v1.17 新增来源设备隔离的照片二进制同步、删除墓碑和 `sync_id` 汇总事件；v1.17.1 增加可选来源标签和仅供管理 WebUI 使用的同步事件缩略图，AI 仍不获得照片引用或内容。
+- `life-radio-api-v1.yaml`：Android、PC 客户端与中央上下文服务的共享同步协议；当前 v1.18.0。时间线支持 ETag 条件校验，PC 小窗与 WebUI 可共享完整业务日缓存；AI reader 个人模式只保持一个有效连接，理解说明先于事实内容。`GET /v1/calendar-days` 以共享业务日起点返回最多 42 个含首含尾日期的逻辑内容量；它接受独立只读或已注册设备凭据，模块互斥，且不把 SQLite 文件占用当作内容量。v1.17 新增来源设备隔离的照片二进制同步、删除墓碑和 `sync_id` 汇总事件；v1.18 允许 AI Reader 在同一 context 端点显式取得受限 JPEG 预览和不透明续页，默认仍为纯文字。
 - `fixtures/`：双方必须能够收发的最小联调样本；`ai-reader-pairing-claim-v1.json` 是不含 pairing/access Token 或完整配对文本的 AI reader claim 样本，`health-info-v1.json` 覆盖计步观察与统一健康读取响应，`wish-event-system-v1.json` 覆盖心愿、时间线、触发器、v1.13 调度设置、系统里程碑和报告正文/投送状态语义。
-- `fixtures/photo-sync-v1.json`：v1.17.1 照片二进制上传所需的非秘密元数据头、可选来源标签与 `sync_id` 汇总响应；图片本体、哈希、Token 和 URL 都不得进入 fixture。
+- `fixtures/photo-sync-v1.json`：v1.17.1 照片二进制上传所需的非秘密元数据头、可选来源标签与 `sync_id` 汇总响应；图片本体、哈希、Token 和 URL 都不得进入 fixture。v1.18 的 AI 预览只从中央受控读取生成，不向上传 fixture 增加图片内容。
 - `central-delivery-v1.md`：新中央单目标架构的身份、队列、确认、幂等与迁移边界。
 - `one-line-invitation-v1.md`：首选的一行邀请码在线配对、一次性领取、同设备幂等和秘密处理规则。
 - `one-line-invitation-payload-v1.schema.json`：`LR1.` 邀请码解码后的短期秘密 payload schema。
 - `enrollment-claim-v1.schema.json`：`POST /v1/enrollments/claim` 的无秘密请求正文 schema；支持严格匹配 `desktop-<UUID>` / `android-install-<UUID>` 与对应平台。
 - `client-profile-v1.schema.json`：PC 与 Android 共用的 `life-radio-client-profile-v1` 客户端配置 schema；Token 字段只定义形状，不提供真实或默认值。
-- `ai-reader-passive-read-v1.md`：v1.15.3 AI reader 的单有效连接、独立身份、稳定同机进程绑定、一次性长期凭据返回、被动读取、reader/epoch 游标、动态标记、served 审计、全部低优先级排除和无副作用原文预览。
+- `ai-reader-passive-read-v1.md`：AI reader 的单有效连接、独立身份、稳定同机进程绑定、一次性长期凭据返回、被动读取、reader/epoch 游标、动态标记、served 审计、全部低优先级排除和无副作用原文预览；默认纯文字，调用方可在同一 context 端点用不透明图片续页取得受限 JPEG 预览。
 - `ai-reader-pairing-claim-v1.schema.json`：`POST /v1/ai-readers/pairings/claim` 的严格无秘密请求正文 schema。
 - `central-server` 的 `POST /v1/events/batches` 是唯一正式上传入口；PC 本地服务只采集本机数据、代理中央读接口并提供 WebUI。
 

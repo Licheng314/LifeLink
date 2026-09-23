@@ -7,6 +7,9 @@ RUN apt-get update \
     && mkdir -p /var/lib/lifelink \
     && chown -R lifelink:lifelink /var/lib/lifelink
 
+COPY central-server/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
 WORKDIR /opt/lifelink
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

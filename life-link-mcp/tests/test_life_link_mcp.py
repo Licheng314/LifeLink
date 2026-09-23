@@ -2,6 +2,7 @@ import importlib.util
 import io
 import json
 import os
+import base64
 import subprocess
 import sys
 import tempfile
@@ -140,6 +141,110 @@ class LifeLinkMCPTests(unittest.TestCase):
         before = reader.state_store.load()
         self.assertEqual(reader.check_updates(), {"connected": True, "update_mcp": True})
         self.assertIn("/v1/read/ai/updates?cursor=saved-cursor", calls[0][1])
+        self.assertEqual(reader.state_store.load(), before)
+
+    def test_image_context_request_saves_main_cursor_and_emits_image_blocks_without_base64_json(self):
+        reader, _ = self.make_reader([])
+        secret = {
+            "access_token": "token", "reader_id": str(uuid.uuid4()),
+            "expires_at": "2099-01-01T00:00:00Z",
+            "context_url": "https://life-link.example.test/v1/read/ai/context",
+            "context_origin": "https://life-link.example.test",
+            "next_cursor": "old-cursor", "understanding_version": "old-version",
+        }
+        reader.state_store.save(
+            central_instance_id="central-test",
+            reader={"type": "mcp.test", "instance_id": f"mcp:{self.profile_id}", "display_name": "Test"},
+            secret=secret,
+        )
+        preview = base64.b64encode(b"jpeg-preview").decode("ascii")
+        calls = []
+
+        def fake_http(method, url, **kwargs):
+            calls.append(url)
+            return 200, {
+                "events": [{"at": "2026-09-22T08:00:00+08:00"}],
+                "understanding": {"version": "new-version", "unchanged": False},
+                "next_cursor": "new-cursor",
+                "photo_delivery": {
+                    "items": [{
+                        "sequence": 1, "captured_at": "2026-09-22T07:55:00+08:00",
+                        "source_label": "Pixel", "content_type": "image/jpeg",
+                        "data_base64": preview,
+                    }],
+                    "delivered": 1, "total": 2, "unavailable": 0,
+                    "status": "in_progress", "photo_page": "opaque-next-page",
+                },
+            }
+
+        reader.http_json = fake_http
+        payload = reader.read_context({"name": "test"}, include_images=True)
+        result = life_link_mcp._tool_result(payload)
+
+        self.assertIn("cursor=old-cursor", calls[0])
+        self.assertIn("include_images=true", calls[0])
+        self.assertEqual(reader.state_store.load()["secret"]["next_cursor"], "new-cursor")
+        self.assertNotIn(preview, result["content"][0]["text"])
+        self.assertNotIn("data_base64", result["content"][0]["text"])
+        self.assertNotIn("data_base64", result["structuredContent"]["photo_delivery"]["items"][0])
+        self.assertEqual(result["content"][1]["text"], "图片 1：拍摄于 2026-09-22T07:55:00+08:00；来源：Pixel。")
+        self.assertEqual(result["content"][2], {"type": "image", "data": preview, "mimeType": "image/jpeg"})
+
+    def test_photo_page_does_not_send_or_save_main_cursor_or_understanding(self):
+        reader, _ = self.make_reader([])
+        secret = {
+            "access_token": "token", "reader_id": str(uuid.uuid4()),
+            "expires_at": "2099-01-01T00:00:00Z",
+            "context_url": "https://life-link.example.test/v1/read/ai/context",
+            "context_origin": "https://life-link.example.test",
+            "next_cursor": "saved-cursor", "understanding_version": "saved-version",
+        }
+        reader.state_store.save(
+            central_instance_id="central-test",
+            reader={"type": "mcp.test", "instance_id": f"mcp:{self.profile_id}", "display_name": "Test"},
+            secret=secret,
+        )
+        before = reader.state_store.load()
+        calls = []
+
+        def fake_http(method, url, **kwargs):
+            calls.append(url)
+            return 200, {"photo_delivery": {
+                "items": [], "delivered": 2, "total": 2, "unavailable": 0, "status": "complete",
+            }}
+
+        reader.http_json = fake_http
+        payload = reader.read_context(
+            {"name": "test"}, include_images=True, photo_page="opaque-page",
+        )
+
+        self.assertEqual(payload["photo_delivery"]["status"], "complete")
+        self.assertIn("include_images=true", calls[0])
+        self.assertIn("photo_page=opaque-page", calls[0])
+        self.assertNotIn("cursor=", calls[0])
+        self.assertNotIn("understanding_version=", calls[0])
+        self.assertEqual(reader.state_store.load(), before)
+
+    def test_photo_page_error_leaves_main_state_unchanged(self):
+        reader, _ = self.make_reader([])
+        secret = {
+            "access_token": "token", "reader_id": str(uuid.uuid4()),
+            "expires_at": "2099-01-01T00:00:00Z",
+            "context_url": "https://life-link.example.test/v1/read/ai/context",
+            "context_origin": "https://life-link.example.test",
+            "next_cursor": "saved-cursor", "understanding_version": "saved-version",
+        }
+        reader.state_store.save(
+            central_instance_id="central-test",
+            reader={"type": "mcp.test", "instance_id": f"mcp:{self.profile_id}", "display_name": "Test"},
+            secret=secret,
+        )
+        before = reader.state_store.load()
+        reader.http_json = lambda *args, **kwargs: (400, {"error": "invalid_photo_page"})
+
+        with self.assertRaisesRegex(life_link_mcp.LifeLinkMCPError, "photo page read failed"):
+            reader.read_context({"name": "test"}, include_images=True, photo_page="bad-page")
+
         self.assertEqual(reader.state_store.load(), before)
 
     def test_reader_file_can_supply_generic_process_binding_without_app_detection(self):

@@ -211,6 +211,23 @@ class CentralManagementTests(unittest.TestCase):
         self.assertIn("reader.last_requested_at || log?.requested_at", script)
         self.assertIn("ai-reader-detection-dot", script)
 
+    def test_management_timeline_limits_photo_delivery_copy_to_sync_events(self):
+        web_root = Path(__file__).resolve().parents[1] / "management-web"
+        script = (web_root / "assets" / "scripts" / "wishes-events.js").read_text(encoding="utf-8")
+        stylesheet = (web_root / "assets" / "styles" / "wishes-events.css").read_text(encoding="utf-8")
+        self.assertIn("function photoDeliveryProgressText(event, aiState)", script)
+        self.assertIn("event?.event_key !== 'photo.sync_confirmed'", script)
+        self.assertIn("delivery.delivered_count ?? delivery.delivered", script)
+        self.assertIn("delivery.total_count ?? delivery.total", script)
+        self.assertIn("case 'in_progress'", script)
+        self.assertIn("图片传输中 ${progress}", script)
+        self.assertIn("case 'complete'", script)
+        self.assertIn("图片传输完成 ${progress}", script)
+        self.assertIn("case 'failed'", script)
+        self.assertIn("图片传输失败 ${progress}", script)
+        self.assertIn("photoDeliveryProgressText(e, aiState)", script)
+        self.assertIn(".event-ai-mark.photo-delivery", stylesheet)
+
     def test_copied_dashboard_reports_central_health_and_ai_access_records(self):
         status, health = self.request("/api/central-health", csrf=False, origin=False)
         self.assertEqual(status, 200)

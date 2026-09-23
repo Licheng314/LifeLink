@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Life Link Context Sync API
-  version: 1.17.1
+  version: 1.18.0
   description: |
     Android、PC/Web 采集器与中央上下文服务之间的同步协议。
     所有时间均为 UTC ISO 8601（带 Z），持续时长单位为秒。
@@ -37,6 +37,7 @@ info:
     v1.16.0 增加中央权威的每日重复时间区间；它是用户主动安排而非采集事实，普通区间在业务日环中不得重叠，起止相同表示零时长时间锚。
     v1.17.0 增加来源设备隔离的照片同步：图片二进制只存中央 media/photos，SQLite 仅保存元数据、同步幂等状态和删除墓碑。设备只能读取、上传或删除自己的记录；确认同步按 sync_id 最多投影一次普通重要度文字汇总事件，AI 不获得图片二进制或 URL。
     v1.17.1 为照片增加可选的 UTF-8 百分号编码来源标签；管理 WebUI 可在图库和同步事件中读取有限缩略图并打开原图，AI Reader 仍只获得文字汇总，不获得照片引用、URL 或图片内容。
+    v1.18.0 扩展 AI Reader 的同一被动 context 读取：默认仍为纯文字；调用方显式请求时，中央按需生成受尺寸和总量限制的 JPEG 预览，并以 reader/epoch 绑定的不透明 photo_page 续页。续页不推进主游标、不重复背景或事件；SQLite 不保存预览字节，不做 OCR、图片描述或多模态能力检测。
 servers:
   - url: https://{host}
     variables:
@@ -190,6 +191,8 @@ paths:
         - $ref: '#/components/parameters/AIReaderCursor'
         - $ref: '#/components/parameters/AIReaderUnderstandingVersion'
         - $ref: '#/components/parameters/AIReaderView'
+        - $ref: '#/components/parameters/AIReaderIncludeImages'
+        - $ref: '#/components/parameters/AIReaderPhotoPage'
       responses:
         '200':
           description: Full or compact current background, current-business-day events after the reader-bound cursor (or the whole new business day after rollover), versioned understanding guidance, and a newly signed opaque cursor.
@@ -199,6 +202,7 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/AIReaderContextResponse'
                   - $ref: '#/components/schemas/AIReaderCompactContextResponse'
+                  - $ref: '#/components/schemas/AIReaderPhotoPageResponse'
         '400':
           description: invalid_cursor or invalid business_date/understanding_version. A malformed, tampered, or different-reader cursor is never treated as an empty page.
           content:
@@ -1611,6 +1615,23 @@ components:
         type: string
         enum: [full, compact]
         default: compact
+    AIReaderIncludeImages:
+      name: include_images
+      in: query
+      required: false
+      description: Defaults to false. true requests bounded JPEG previews for photo.sync_confirmed events without changing normal cursor semantics.
+      schema:
+        type: boolean
+        default: false
+    AIReaderPhotoPage:
+      name: photo_page
+      in: query
+      required: false
+      description: Opaque reader- and epoch-bound image continuation. It requires include_images=true and returns only the next image page, without background, events, or a main timeline cursor.
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 2048
   schemas:
     AIReaderIdentity:
       type: object
@@ -1806,6 +1827,8 @@ components:
           minLength: 16
           maxLength: 2048
           description: Newly central-signed opaque cursor bound to the authenticated reader and current epoch, including when events is empty.
+        photo_delivery:
+          $ref: '#/components/schemas/AIReaderPhotoDelivery'
     AIReaderCompactEvent:
       type: object
       additionalProperties: false
@@ -1884,6 +1907,38 @@ components:
           type: string
           minLength: 16
           maxLength: 2048
+        photo_delivery:
+          $ref: '#/components/schemas/AIReaderPhotoDelivery'
+    AIReaderPhotoItem:
+      type: object
+      additionalProperties: false
+      required: [sequence, captured_at, source_label, content_type, data_base64]
+      properties:
+        sequence: {type: integer, minimum: 1}
+        captured_at: {type: string, format: date-time}
+        source_label: {type: string}
+        content_type: {type: string, const: image/jpeg}
+        data_base64: {type: string, description: Metadata-free JPEG preview bytes encoded with standard base64.}
+    AIReaderPhotoDelivery:
+      type: object
+      additionalProperties: false
+      required: [items, delivered, total, unavailable, status]
+      properties:
+        items:
+          type: array
+          maxItems: 4
+          items: {$ref: '#/components/schemas/AIReaderPhotoItem'}
+        delivered: {type: integer, minimum: 0, description: Cumulative successful previews in this event group.}
+        total: {type: integer, minimum: 0}
+        unavailable: {type: integer, minimum: 0, description: Deleted or undecodable originals; they never make textual event delivery fail.}
+        status: {type: string, enum: [in_progress, complete, failed]}
+        photo_page: {type: string, minLength: 16, maxLength: 2048}
+    AIReaderPhotoPageResponse:
+      type: object
+      additionalProperties: false
+      required: [photo_delivery]
+      properties:
+        photo_delivery: {$ref: '#/components/schemas/AIReaderPhotoDelivery'}
     AIReaderContextPreviewResponse:
       type: object
       additionalProperties: false
@@ -2655,6 +2710,18 @@ components:
           format: uuid
         reader_display_name:
           type: [string, 'null']
+        photo_delivery:
+          $ref: '#/components/schemas/TimelineAIPhotoDelivery'
+          description: Present only for photo.sync_confirmed on management/read timeline projections; it is event-level transfer progress, never a per-photo AI state.
+    TimelineAIPhotoDelivery:
+      type: object
+      additionalProperties: false
+      required: [total, delivered, unavailable, status]
+      properties:
+        total: {type: integer, minimum: 0}
+        delivered: {type: integer, minimum: 0}
+        unavailable: {type: integer, minimum: 0}
+        status: {type: string, enum: [in_progress, complete, failed]}
     TimelineEventListResponse:
       type: object
       additionalProperties: false

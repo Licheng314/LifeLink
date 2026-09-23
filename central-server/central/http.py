@@ -82,6 +82,9 @@ class CentralHTTPServer(ThreadingMixIn, HTTPServer):
         self.scheduler = MinuteScheduler(self.store)
         self.media = MediaManager(MediaSettings.from_config(config))
         self.photos = PhotoStore(self.store)
+        # AI reader delivery is a central projection over this media store; it
+        # never exposes the original-photo HTTP routes or their identifiers.
+        self.store.photo_store = self.photos
         self.web_sessions = WebSessionManager()
         self.management_server: Any | None = None
         super().__init__(server_address, CentralRequestHandler)
@@ -1024,7 +1027,7 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_ai_reader_context(self, params: dict[str, list[str]]) -> None:
         unsupported = set(params) - {
-            "business_date", "cursor", "understanding_version", "view"
+            "business_date", "cursor", "understanding_version", "view", "include_images", "photo_page"
         }
         if (
             unsupported
@@ -1035,7 +1038,7 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
                 400,
                 {
                     "error": "invalid_ai_context_request",
-                    "message": "only one business_date, cursor, understanding_version and view are supported",
+                    "message": "only one business_date, cursor, understanding_version, view, include_images and photo_page are supported",
                 },
             )
             return
@@ -1053,6 +1056,12 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
             view = params.get("view", ["compact"])[0]
             if view not in {"full", "compact"}:
                 raise ValueError("view must be full or compact")
+            include_images = params.get("include_images", ["false"])[0]
+            if include_images not in {"true", "false"}:
+                raise ValueError("include_images must be true or false")
+            photo_page = params.get("photo_page", [None])[0]
+            if photo_page is not None and (include_images != "true" or len(photo_page) > 2048):
+                raise ValueError("photo_page requires include_images=true and must be bounded")
             reader = self.server.store.ai_readers.authenticate(self.bearer_token())
             served = self.server.store.ai_readers.serve_context(
                 reader,
@@ -1060,6 +1069,8 @@ class CentralRequestHandler(BaseHTTPRequestHandler):
                 business_date=requested_business_date,
                 known_understanding_version=understanding_version,
                 view=view,
+                include_images=include_images == "true",
+                photo_page=photo_page,
             )
         except ValueError as error:
             self.send_json(

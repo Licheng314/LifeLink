@@ -1457,6 +1457,7 @@ class CentralStore:
                 )
             }
         primary_reader, served_event_ids = self.ai_readers.served_event_ids_for_primary()
+        photo_delivery = self.ai_readers.photo_delivery_for_primary()
         events = []
         for row in rows:
             subject = json.loads(row["subject_json"])
@@ -1470,7 +1471,7 @@ class CentralStore:
             ai_reader_state = "not_applicable" if row["importance"] == "low" else (
                 "served" if str(row["timeline_event_id"]) in served_event_ids else "not_served"
             )
-            events.append({
+            event = {
                 "timeline_event_id": row["timeline_event_id"], "occurred_at": row["occurred_at"],
                 "created_at": row["created_at"], "event_key": row["event_key"],
                 "category": row["category"], "importance": row["importance"],
@@ -1487,7 +1488,10 @@ class CentralStore:
                     "reader_id": primary_reader["reader_id"] if primary_reader else None,
                     "reader_display_name": primary_reader["display_name"] if primary_reader else None,
                 },
-            })
+            }
+            if row["event_key"] == "photo.sync_confirmed" and str(row["timeline_event_id"]) in photo_delivery:
+                event["ai_reader"]["photo_delivery"] = photo_delivery[str(row["timeline_event_id"])]
+            events.append(event)
         return {"window": {"from": utc_timestamp(start), "to": utc_timestamp(end)}, "events": events}
 
     def create_client_invitation(

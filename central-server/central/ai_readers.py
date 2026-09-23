@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import base64
 import os
 import re
 import secrets
@@ -280,6 +281,28 @@ CREATE TABLE IF NOT EXISTS ai_reader_access_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_reader_access_logs_reader
     ON ai_reader_access_logs(reader_id, requested_at DESC, access_log_id DESC);
+CREATE TABLE IF NOT EXISTS ai_reader_photo_pages (
+    page_hash TEXT PRIMARY KEY,
+    reader_id TEXT NOT NULL REFERENCES ai_readers(reader_id),
+    cursor_epoch INTEGER NOT NULL,
+    event_ids_json TEXT NOT NULL,
+    candidates_json TEXT NOT NULL,
+    offset INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    response_json TEXT
+);
+CREATE TABLE IF NOT EXISTS ai_reader_photo_delivery (
+    reader_id TEXT NOT NULL REFERENCES ai_readers(reader_id),
+    cursor_epoch INTEGER NOT NULL,
+    timeline_event_id TEXT NOT NULL,
+    total_count INTEGER NOT NULL,
+    delivered_count INTEGER NOT NULL DEFAULT 0,
+    unavailable_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(reader_id, cursor_epoch, timeline_event_id)
+);
 """
 
 
@@ -1135,6 +1158,108 @@ class AIReaderService:
                 ),
             )
 
+    def _new_photo_page(
+        self, reader_id: str, epoch: int, event_ids: list[str], candidates: list[dict[str, Any]], offset: int = 0
+    ) -> str:
+        token = secrets.token_urlsafe(32)
+        now = utc_timestamp()
+        with self.store._connection() as connection:
+            connection.execute(
+                """INSERT INTO ai_reader_photo_pages(page_hash,reader_id,cursor_epoch,event_ids_json,candidates_json,offset,created_at,expires_at)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (self.token_hash(token), reader_id, epoch, canonical_json(event_ids), canonical_json(candidates), offset, now, utc_timestamp(_now() + CURSOR_LIFETIME)),
+            )
+        return token
+
+    def _photo_delivery_payload(self, reader_id: str, page_token: str) -> dict[str, Any]:
+        """Serve one immutable photo page. Resize happens outside SQLite writes."""
+        with self.store._connection() as connection:
+            page = connection.execute("SELECT * FROM ai_reader_photo_pages WHERE page_hash=?", (self.token_hash(page_token),)).fetchone()
+            fresh = connection.execute("SELECT cursor_epoch FROM ai_readers WHERE reader_id=? AND revoked_at IS NULL", (reader_id,)).fetchone()
+        if page is None or fresh is None or str(page["reader_id"]) != reader_id:
+            raise AIReaderCursorInvalid("photo_page is missing or invalid")
+        if int(page["cursor_epoch"]) != int(fresh["cursor_epoch"]):
+            raise AIReaderCursorSuperseded("photo_page was superseded by a reader reset or re-pairing")
+        if _now() >= _parse_utc(str(page["expires_at"])):
+            raise AIReaderCursorExpired("photo_page has expired")
+        candidates = json.loads(str(page["candidates_json"]))
+        offset = int(page["offset"])
+        window = candidates[offset:offset + 4]
+        items: list[dict[str, Any]] = []
+        unavailable_by_event: dict[str, int] = {}
+        delivered_by_event: dict[str, int] = {}
+        photo_store = getattr(self.store, "photo_store", None)
+        for index, candidate in enumerate(window, start=offset + 1):
+            try:
+                preview = photo_store.ai_preview(candidate) if photo_store is not None else None
+            except Exception:
+                # Do not turn an unexpected image-processing failure into a
+                # successful empty page; retain the event-level failure state.
+                self._mark_photo_delivery_failed(reader_id, int(page["cursor_epoch"]), candidates)
+                raise
+            event_id = str(candidate["timeline_event_id"])
+            if preview is None:
+                unavailable_by_event[event_id] = unavailable_by_event.get(event_id, 0) + 1
+                continue
+            data, content_type = preview
+            items.append({"sequence": index, "captured_at": candidate["captured_at"], "source_label": candidate["source_label"], "content_type": content_type, "data_base64": base64.b64encode(data).decode("ascii")})
+            delivered_by_event[event_id] = delivered_by_event.get(event_id, 0) + 1
+        next_page = None
+        if not page["response_json"] and offset + 4 < len(candidates):
+            next_page = self._new_photo_page(reader_id, int(page["cursor_epoch"]), json.loads(str(page["event_ids_json"])), candidates, offset + 4)
+        with self.store._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                latest = connection.execute("SELECT response_json FROM ai_reader_photo_pages WHERE page_hash=?", (self.token_hash(page_token),)).fetchone()
+                if latest is not None and latest["response_json"]:
+                    metadata = json.loads(str(latest["response_json"]))
+                else:
+                    totals = {event_id: 0 for event_id in json.loads(str(page["event_ids_json"]))}
+                    for candidate in candidates: totals[str(candidate["timeline_event_id"])] = totals.get(str(candidate["timeline_event_id"]), 0) + 1
+                    now = utc_timestamp()
+                    for event_id, total in totals.items():
+                        connection.execute("INSERT OR IGNORE INTO ai_reader_photo_delivery(reader_id,cursor_epoch,timeline_event_id,total_count,status,updated_at) VALUES(?,?,?,?, 'in_progress', ?)", (reader_id, int(page["cursor_epoch"]), event_id, total, now))
+                    for event_id in totals:
+                        connection.execute("UPDATE ai_reader_photo_delivery SET delivered_count=delivered_count+?, unavailable_count=unavailable_count+?, updated_at=? WHERE reader_id=? AND cursor_epoch=? AND timeline_event_id=?", (delivered_by_event.get(event_id, 0), unavailable_by_event.get(event_id, 0), now, reader_id, int(page["cursor_epoch"]), event_id))
+                    rows = connection.execute("SELECT * FROM ai_reader_photo_delivery WHERE reader_id=? AND cursor_epoch=? AND timeline_event_id IN (" + ",".join("?" for _ in totals) + ")", (reader_id, int(page["cursor_epoch"]), *totals)).fetchall() if totals else []
+                    for row in rows:
+                        status = "complete" if int(row["delivered_count"]) + int(row["unavailable_count"]) >= int(row["total_count"]) else "in_progress"
+                        connection.execute("UPDATE ai_reader_photo_delivery SET status=? WHERE reader_id=? AND cursor_epoch=? AND timeline_event_id=?", (status, reader_id, int(page["cursor_epoch"]), row["timeline_event_id"]))
+                    aggregate_total = len(candidates)
+                    aggregate_delivered = sum(int(row["delivered_count"]) for row in rows)
+                    aggregate_unavailable = sum(int(row["unavailable_count"]) for row in rows)
+                    metadata = {"delivered": aggregate_delivered, "total": aggregate_total, "unavailable": aggregate_unavailable, "status": "complete" if aggregate_delivered + aggregate_unavailable >= aggregate_total else "in_progress", "photo_page": next_page}
+                    if next_page is None: metadata.pop("photo_page")
+                    # Never store preview bytes (or base64) in SQLite.
+                    connection.execute("UPDATE ai_reader_photo_pages SET response_json=? WHERE page_hash=?", (canonical_json(metadata), self.token_hash(page_token)))
+                connection.commit()
+            except Exception:
+                connection.rollback(); raise
+        return {"items": items, **metadata}
+
+    def _mark_photo_delivery_failed(self, reader_id: str, epoch: int, candidates: list[dict[str, Any]]) -> None:
+        totals: dict[str, int] = {}
+        for candidate in candidates:
+            event_id = str(candidate["timeline_event_id"])
+            totals[event_id] = totals.get(event_id, 0) + 1
+        with self.store._connection() as connection:
+            now = utc_timestamp()
+            for event_id, total in totals.items():
+                connection.execute("INSERT OR IGNORE INTO ai_reader_photo_delivery(reader_id,cursor_epoch,timeline_event_id,total_count,status,updated_at) VALUES(?,?,?,?, 'failed', ?)", (reader_id, epoch, event_id, total, now))
+                connection.execute("UPDATE ai_reader_photo_delivery SET status='failed', updated_at=? WHERE reader_id=? AND cursor_epoch=? AND timeline_event_id=?", (now, reader_id, epoch, event_id))
+
+    def photo_delivery_for_primary(self) -> dict[str, dict[str, Any]]:
+        """Current-epoch event progress for the management timeline projection."""
+        reader = self.primary_reader()
+        if reader is None:
+            return {}
+        with self.store._connection() as connection:
+            rows = connection.execute(
+                "SELECT timeline_event_id,total_count,delivered_count,unavailable_count,status FROM ai_reader_photo_delivery WHERE reader_id=? AND cursor_epoch=?",
+                (reader["reader_id"], int(reader["cursor_epoch"])),
+            ).fetchall()
+        return {str(row["timeline_event_id"]): {"total": int(row["total_count"]), "delivered": int(row["delivered_count"]), "unavailable": int(row["unavailable_count"]), "status": str(row["status"])} for row in rows}
+
     def serve_context(
         self,
         reader: dict[str, Any],
@@ -1143,16 +1268,24 @@ class AIReaderService:
         business_date: str | None,
         known_understanding_version: str | None,
         view: str = "compact",
+        include_images: bool = False,
+        photo_page: str | None = None,
         now: datetime | None = None,
     ) -> ServedAIContext:
         if view not in CONTEXT_VIEWS:
             raise ValueError("view must be full or compact")
+        if photo_page is not None:
+            if not include_images:
+                raise ValueError("photo_page requires include_images")
+            payload = {"photo_delivery": self._photo_delivery_payload(str(reader["reader_id"]), photo_page)}
+            return ServedAIContext(payload=payload, body=json.dumps(payload, ensure_ascii=False).encode("utf-8"))
         started = time.perf_counter()
         current = _now(now)
         requested_at = utc_timestamp(current)
         request_id = str(uuid.uuid4())
         reader_id = str(reader["reader_id"])
         requested_position: tuple[str | None, str | None] = (None, None)
+        photo_candidates: list[dict[str, Any]] = []
 
         background = self.store.event_background(business_date, now=current)
         selected_business_date = str(background["business_date"])
@@ -1259,6 +1392,26 @@ class AIReaderService:
                     events = [
                         self._timeline_event(row, device_names) for row in rows
                     ]
+                    # Photo sync remains textual by default. Add only capture
+                    # time/source metadata, never identifiers, paths, hashes,
+                    # URLs, or an assertion about image content.
+                    photo_event_ids = [
+                        str(event["timeline_event_id"])
+                        for event in events
+                        if event.get("event_key") == "photo.sync_confirmed"
+                    ]
+                    photo_store = getattr(self.store, "photo_store", None)
+                    photo_candidates = photo_store.sync_ai_candidates(photo_event_ids) if photo_store is not None else []
+                    metadata_by_event: dict[str, list[str]] = {}
+                    for index, candidate in enumerate(photo_candidates, start=1):
+                        if candidate.get("captured_at") and candidate.get("source_label"):
+                            metadata_by_event.setdefault(str(candidate["timeline_event_id"]), []).append(
+                                f"第 {index} 张拍摄于 {self._local_timestamp(str(candidate['captured_at']))}，来源：{candidate['source_label']}"
+                            )
+                    for event in events:
+                        metadata = metadata_by_event.get(str(event["timeline_event_id"]))
+                        if metadata:
+                            event["detail"] = (str(event.get("detail") or "") + " 照片元数据：" + "；".join(metadata) + "。").strip()
                     next_cursor = secrets.token_urlsafe(32)
                     importance_counts = {"high": 0, "normal": 0, "low": 0}
                     for event in events:
@@ -1421,6 +1574,22 @@ class AIReaderService:
             )
             raise
 
+        # The primary context transaction is intentionally complete before any
+        # image decode or resize. A normal context remains authoritative even
+        # when every selected original has been deleted or is undecodable.
+        if include_images:
+            photo_events = [str(event["timeline_event_id"]) for event in events if event.get("event_key") == "photo.sync_confirmed"]
+            if photo_candidates:
+                page = self._new_photo_page(reader_id, epoch, photo_events, photo_candidates)
+                try:
+                    payload["photo_delivery"] = self._photo_delivery_payload(reader_id, page)
+                except Exception:
+                    # Text context was already committed successfully. Surface a
+                    # truthful delivery failure instead of rolling its cursor
+                    # back or claiming an empty image transfer succeeded.
+                    self._mark_photo_delivery_failed(reader_id, epoch, photo_candidates)
+                    payload["photo_delivery"] = {"items": [], "delivered": 0, "total": len(photo_candidates), "unavailable": 0, "status": "failed"}
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         return ServedAIContext(payload=payload, body=body)
 
     def preview_next_context(

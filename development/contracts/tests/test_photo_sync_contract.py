@@ -14,7 +14,7 @@ class PhotoSyncContractTest(unittest.TestCase):
 
     def test_contract_exposes_source_scoped_binary_sync_and_compat_delete(self):
         for marker in (
-            "version: 1.17.1",
+            "version: 1.18.0",
             "/v1/photos:",
             "/v1/photos/{photo_id}/content:",
             "/v1/photos/{photo_id}:",
@@ -24,7 +24,7 @@ class PhotoSyncContractTest(unittest.TestCase):
             "X-Photo-Captured-At",
             "X-Photo-Source-Label",
             "current_business_date_added_count",
-            "AI 不获得图片二进制或 URL",
+            "v1.18.0 扩展 AI Reader",
         ):
             self.assertIn(marker, self.openapi)
 

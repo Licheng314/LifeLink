@@ -1,8 +1,8 @@
 """Photo metadata and immutable-file storage for the central v1 API.
 
 The database stores only metadata/tombstones; photo bytes always live below the
-single central data directory.  This module deliberately does no image decode
-or transformation.
+single central data directory. AI previews are generated on demand as bounded,
+metadata-free JPEGs and cached separately from immutable originals.
 """
 from __future__ import annotations
 
@@ -13,13 +13,18 @@ import sqlite3
 import tempfile
 import threading
 import uuid
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from PIL import Image, ImageOps
+
 from .domain import canonical_json, utc_timestamp
 
 MAX_PHOTO_BYTES = 20 * 1024 * 1024
+AI_PREVIEW_MAX_EDGE = 1600
+AI_PREVIEW_MAX_BYTES = 2 * 1024 * 1024
 ALLOWED_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/heic"}
 
 SCHEMA = """
@@ -57,6 +62,7 @@ class PhotoStore:
     def __init__(self, store: Any) -> None:
         self.store = store
         self.root = Path(store.database_path).parent / "media" / "photos"
+        self.preview_root = Path(store.database_path).parent / "media" / "ai-previews"
         # File replacement and its matching SQLite transition form one logical
         # operation.  Serialize them so two retries cannot clean up each
         # other's newly committed file after a database failure.
@@ -189,6 +195,53 @@ class PhotoStore:
         try: return (self.root / str(row["file_name"])).read_bytes(), str(row["mime_type"])
         except OSError: return None
 
+    def sync_ai_candidates(self, timeline_event_ids: list[str]) -> list[dict[str, Any]]:
+        """Frozen-order references for delivered sync events, including tombstones."""
+        if not timeline_event_ids:
+            return []
+        marks = ",".join("?" for _ in timeline_event_ids)
+        with self.store._connection() as c:
+            rows = c.execute(
+                f"""SELECT s.timeline_event_id,p.source_device_id,p.photo_id,p.captured_at,
+                           p.source_label,p.mime_type,p.file_name,p.status
+                    FROM photo_syncs AS s JOIN photo_sync_changes AS ch ON ch.sync_id=s.sync_id
+                    LEFT JOIN photos AS p ON p.source_device_id=ch.source_device_id AND p.photo_id=ch.photo_id
+                    WHERE s.timeline_event_id IN ({marks}) AND ch.action='added'
+                    ORDER BY s.timeline_event_id,p.captured_at ASC,p.photo_id ASC""",
+                timeline_event_ids,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def ai_preview(self, item: dict[str, Any]) -> tuple[bytes, str] | None:
+        """Return a cached JPEG preview, or None for deleted or unreadable media."""
+        if item.get("status") != "active" or not item.get("file_name"):
+            return None
+        target = self.preview_root / f"{item['source_device_id']}-{item['photo_id']}.jpg"
+        try:
+            if target.is_file():
+                data = target.read_bytes()
+                return (data, "image/jpeg") if len(data) <= AI_PREVIEW_MAX_BYTES else None
+            self.preview_root.mkdir(parents=True, exist_ok=True)
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(self.root / str(item["file_name"])) as image:
+                    image = ImageOps.exif_transpose(image)
+                    image.thumbnail((AI_PREVIEW_MAX_EDGE, AI_PREVIEW_MAX_EDGE), Image.Resampling.BILINEAR)
+                    image = image.convert("RGB")
+                    fd, temporary = tempfile.mkstemp(dir=self.preview_root, prefix=".preview-", suffix=".jpg")
+                    try:
+                        with os.fdopen(fd, "wb") as output:
+                            image.save(output, format="JPEG", quality=75)
+                            output.flush(); os.fsync(output.fileno())
+                        if os.path.getsize(temporary) > AI_PREVIEW_MAX_BYTES:
+                            return None
+                        os.replace(temporary, target)
+                    finally:
+                        if os.path.exists(temporary): os.unlink(temporary)
+            return target.read_bytes(), "image/jpeg"
+        except (OSError, ValueError, Image.DecompressionBombError):
+            return None
+
     def sync_previews(self, source_device_id: str, sync_id: str, *, limit: int = 4) -> list[dict[str, Any]]:
         """Management-only references for a photo-sync timeline card; never used by AI readers."""
         if not _uuid(sync_id) or not 1 <= limit <= 8: return []
@@ -217,7 +270,9 @@ class PhotoStore:
                 settings = self.store.get_shared_settings(); today = self.store._business_date(datetime.now(timezone.utc), int(settings["day_start_hour"]), settings["timezone"]).isoformat()
                 today_added = sum(row["action"] == "added" and row["business_date"] == today for row in changes)
                 event_id = str(uuid.uuid4()); now = utc_timestamp()
-                # A sync completion is the only photo fact that reaches AI; never include a URL/hash/file name.
+                # The event summary is the stable AI-facing fact. Optional
+                # previews are served later through the Reader projection and
+                # never expose a photo URL, hash, file name, or storage path.
                 detail = f"照片同步确认：新增 {added} 张（当前业务日 {today_added} 张），移除 {removed} 张。业务日：{today}。"
                 c.execute("""INSERT INTO timeline_events(timeline_event_id,occurred_at,created_at,event_key,category,importance,title,detail,source_kind,source_device_id,wish_id,trigger_id,subject_json,evidence_json,statistics_window_json,delivery_json,dedupe_key)
                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (event_id,now,now,"photo.sync_confirmed","device","normal","照片同步",detail,"device",device_id,None,None,canonical_json({"business_date":today}),canonical_json({"added_count":added,"current_business_date_added_count":today_added,"removed_count":removed,"business_date":today}),None,None,f"photo-sync:{device_id}:{sync_id}"))

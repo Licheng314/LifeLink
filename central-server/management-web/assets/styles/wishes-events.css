@@ -70,6 +70,7 @@
 .event-item .event-title { font-weight:700; font-size:16px; line-height:1.45 }
 .event-ai-mark { flex-shrink:0; padding:3px 8px; border-radius:999px; text-align:center; font-size:11px; line-height:1.2; font-weight:700; white-space:nowrap }
 .event-ai-mark.served { color:#B45309; background:rgba(251,191,36,.18) }
+.event-ai-mark.photo-delivery { max-width:180px; white-space:normal }
 .event-ai-mark.pending { color:var(--text-secondary); background:rgba(155,145,134,.14) }
 .event-star { font-size:12px; vertical-align:1px }
 .event-icon-tag { display:inline-block; padding:1px 7px; border-radius:6px; color:#fff; font-size:11px; font-weight:700; line-height:1.4; vertical-align:1px }
