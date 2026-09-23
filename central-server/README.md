@@ -85,7 +85,9 @@
 
 ### Linux / Docker（服务器部署）
 
-`Dockerfile` 与 `compose.yaml` 提供的是无桌面中央服务部署：容器使用 Python 3.13、`tzdata` 和唯一的图像运行依赖 Pillow（仅为 AI 预览缩放），以非 root 用户运行，SQLite 配置和数据库保存在具名持久卷 `lifelink-central-data`。Windows 源码环境首次运行前也应执行 `python -m pip install -r requirements.txt`。镜像不包含任何真实配置、设备凭据或历史数据；但会显式带入仓库版本化的 MCP 程序和 AI Reader 指引，因此无论 Windows 源码、Linux 还是 Docker，WebUI 生成的 AI 配对 ZIP 都包含相同的完整运行材料。
+`Dockerfile` 与 `compose.yaml` 提供的是无桌面中央服务部署：容器使用固定版本的 Python 3.13 镜像（已包含所需时区数据，无需额外 apt 安装）和图像运行依赖 Pillow（仅为 AI 预览缩放），以非 root 用户运行，SQLite 配置和数据库保存在具名持久卷 `lifelink-central-data`。Windows 源码环境首次运行前也应执行 `python -m pip install -r requirements.txt`。镜像不包含任何真实配置、设备凭据或历史数据；但会显式带入仓库版本化的 MCP 程序和 AI Reader 指引，因此无论 Windows 源码、Linux 还是 Docker，WebUI 生成的 AI 配对 ZIP 都包含相同的完整运行材料。
+
+后续更新可以在仓库根目录的 PowerShell 中使用一条命令；第一次使用先将 `central-server/deploy.local.example.json` 复制为 Git 忽略的 `central-server/deploy.local.json`，填写服务器、SSH **私钥路径**（不是私钥内容）及推送远端。先执行 `./development/tools/deploy-central.ps1 -DryRun` 查看版本和未提交的部署文件，再执行 `./development/tools/deploy-central.ps1` 发布。它只接受当前 `codex/` 分支的 HEAD，推送确切提交，在服务器核对容器/持久卷、备份整个卷、构建新镜像并做健康检查；失败时尝试恢复旧镜像。构建使用配置的 HTTPS PyPI 镜像；需要更新 Python 基础镜像时须审查并重新固定 Dockerfile 摘要。脚本不会提交代码，也不会发布 Android 包。首次安装、数据库恢复和跨版本迁移仍需单独操作；真实发布时会有短暂停机。
 
 在 Linux 服务器的 `central-server/` 目录执行：
 

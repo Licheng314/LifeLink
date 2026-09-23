@@ -1,14 +1,13 @@
-FROM python:3.13-slim
+FROM python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0
 
-RUN apt-get update \
-    && apt-get install --no-install-recommends -y tzdata \
-    && rm -rf /var/lib/apt/lists/* \
+RUN python -c "from zoneinfo import ZoneInfo; ZoneInfo('Asia/Shanghai')" \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin lifelink \
     && mkdir -p /var/lib/lifelink \
     && chown -R lifelink:lifelink /var/lib/lifelink
 
 COPY central-server/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+ARG LIFE_LINK_PIP_INDEX_URL=https://pypi.org/simple
+RUN python -m pip install --no-cache-dir --index-url "$LIFE_LINK_PIP_INDEX_URL" -r /tmp/requirements.txt
 
 WORKDIR /opt/lifelink
 

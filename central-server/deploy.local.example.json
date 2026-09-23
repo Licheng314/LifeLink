@@ -1,0 +1,8 @@
+{
+  "ssh_host": "root@YOUR_SERVER_HOST",
+  "ssh_port": 22,
+  "identity_file": "C:\\Users\\YOUR_USER\\.ssh\\YOUR_KEY",
+  "remote_repo": "/opt/LifeLink",
+  "push_remote": "production",
+  "pip_index_url": "https://pypi.org/simple"
+}

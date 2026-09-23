@@ -18,6 +18,7 @@ skills-lock.json
 *.bak
 central-server/config.json
 central-server/.env
+central-server/deploy.local.json
 central-server/.migration-staging/
 pc-dashboard/config.json
 central-server/*.sqlite3
