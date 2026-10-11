@@ -181,6 +181,7 @@ data class UiState(
 
 data class PhotoDisplay(val photo: AccessiblePhoto, val selection: PhotoSyncSelectionEntity?) {
     val desiredSynced get() = selection?.desiredSynced == true
+    val confirmedSynced get() = selection?.confirmedSynced == true
     val centralDeleted get() = selection?.centralState == "deleted"
 }
 

@@ -52,6 +52,7 @@ class CentralPhotoClient(private val baseUrl: String, private val tokenProvider:
         val request = Request.Builder().url("${baseUrl.trimEnd('/')}/v1/photos/$photoId/content").authorized()
             .header("X-Photo-Sync-Id", syncId).header("X-Photo-Captured-At", photo.capturedAt.toString())
             .header("X-Photo-Time-Source", photo.timeSource).header("X-Photo-Mime-Type", copy.mimeType)
+            .header("X-Photo-Source-Label", java.net.URLEncoder.encode(photo.sourceLabel.take(80), "UTF-8"))
             .header("X-Photo-Width", copy.width.toString()).header("X-Photo-Height", copy.height.toString())
             .header("X-Photo-Byte-Size", copy.bytes.size.toString()).header("X-Photo-Sha256", copy.sha256)
             .post(copy.bytes.toRequestBody(copy.mimeType.toMediaType())).build()

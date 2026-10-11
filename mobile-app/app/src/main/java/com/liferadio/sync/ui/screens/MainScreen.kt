@@ -13,11 +13,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,8 +35,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -40,9 +50,12 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -2263,6 +2276,7 @@ private fun SettingsExpandableCard(
 
 @Composable
 private fun PhotosTab(uiState: UiState, viewModel: MainViewModel, modifier: Modifier = Modifier) {
+    var previewPhoto by remember { mutableStateOf<com.liferadio.sync.data.local.AccessiblePhoto?>(null) }
     val photoPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { viewModel.refreshPhotos(reset = true) }
@@ -2279,66 +2293,74 @@ private fun PhotosTab(uiState: UiState, viewModel: MainViewModel, modifier: Modi
     val todayPhotos = uiState.photos.filter { it.photo.businessDate == today }
     val olderGroups = uiState.photos.filterNot { it.photo.businessDate == today }.groupBy { it.photo.businessDate }.toSortedMap(compareByDescending { it })
     Box(modifier) {
-        LazyColumn(
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(4),
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 84.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            item {
-                Text("照片", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("仅浏览当前允许访问的图片；勾选是本机期望同步集。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.SELECTED) Text("当前为所选照片访问：可见范围可能不完整。", style = MaterialTheme.typography.bodySmall, color = Warning)
-                if (!uiState.photoSyncEnabled) {
-                    Text("启用后才会读取你允许访问的照片。", style = MaterialTheme.typography.bodyMedium, color = Warning)
-                    Spacer(Modifier.height(8.dp))
-                    Button(onClick = {
-                        viewModel.setPhotoSyncEnabled(true)
-                        requestPhotoPermission()
-                    }) { Text("启用并选择照片权限") }
-                } else if (uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.NONE) {
-                    Text("允许访问后，照片会在本页显示。", style = MaterialTheme.typography.bodyMedium, color = Warning)
-                    Spacer(Modifier.height(8.dp))
-                    Button(onClick = requestPhotoPermission) { Text("选择照片权限") }
-                }
-                if (uiState.photoLoadError.isNotBlank()) {
-                    Text(uiState.photoLoadError, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { viewModel.refreshPhotos(reset = true) }) { Text("重试") }
-                        OutlinedButton(onClick = requestPhotoPermission) { Text("重新选择权限") }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("照片", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text("仅浏览当前允许访问的图片；勾选是本机期望同步集。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.SELECTED) Text("当前为所选照片访问：可见范围可能不完整。", style = MaterialTheme.typography.bodySmall, color = Warning)
+                    if (!uiState.photoSyncEnabled) {
+                        Text("启用后才会读取你允许访问的照片。", style = MaterialTheme.typography.bodyMedium, color = Warning)
+                        Spacer(Modifier.height(4.dp))
+                        Button(onClick = {
+                            viewModel.setPhotoSyncEnabled(true)
+                            requestPhotoPermission()
+                        }) { Text("启用并选择照片权限") }
+                    } else if (uiState.photoPermissionScope == com.liferadio.sync.data.local.PhotoPermissionScope.NONE) {
+                        Text("允许访问后，照片会在本页显示。", style = MaterialTheme.typography.bodyMedium, color = Warning)
+                        Spacer(Modifier.height(4.dp))
+                        Button(onClick = requestPhotoPermission) { Text("选择照片权限") }
                     }
+                    if (uiState.photoLoadError.isNotBlank()) {
+                        Text(uiState.photoLoadError, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { viewModel.refreshPhotos(reset = true) }) { Text("重试") }
+                            OutlinedButton(onClick = requestPhotoPermission) { Text("重新选择权限") }
+                        }
+                    }
+                    if (uiState.photoSyncMessage.isNotBlank()) Text(uiState.photoSyncMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
-                if (uiState.photoSyncMessage.isNotBlank()) Text(uiState.photoSyncMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
             if (uiState.photosLoading && uiState.photos.isEmpty()) {
-                item {
+                item(span = { GridItemSpan(maxLineSpan) }) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                         CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
                     }
                 }
             }
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 Text("今日照片", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 Divider(color = MaterialTheme.colorScheme.outlineVariant)
             }
             if (todayPhotos.isNotEmpty()) {
-                items(todayPhotos, key = { it.photo.mediaStoreId }) { PhotoRow(it, viewModel) }
+                gridItems(todayPhotos, key = { it.photo.mediaStoreId }) {
+                    PhotoGridItem(it, onOpen = { previewPhoto = it.photo }, onToggle = { viewModel.togglePhoto(it) })
+                }
             } else if (uiState.photoSyncEnabled && uiState.photoPermissionScope != com.liferadio.sync.data.local.PhotoPermissionScope.NONE) {
-                item { Text("当前业务日暂无可访问照片。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                item(span = { GridItemSpan(maxLineSpan) }) { Text("当前业务日暂无可访问照片。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            if (olderGroups.isNotEmpty()) item { Text("过往照片", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            if (olderGroups.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { Text("过往照片", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             olderGroups.forEach { (date, photos) ->
-                item(key = "date-$date") {
+                item(key = "date-$date", span = { GridItemSpan(maxLineSpan) }) {
                     Column(modifier = Modifier.padding(top = 8.dp)) {
                         Text(date, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.height(6.dp))
                         Divider(color = MaterialTheme.colorScheme.outlineVariant)
                     }
                 }
-                items(photos, key = { it.photo.mediaStoreId }) { PhotoRow(it, viewModel) }
+                gridItems(photos, key = { it.photo.mediaStoreId }) {
+                    PhotoGridItem(it, onOpen = { previewPhoto = it.photo }, onToggle = { viewModel.togglePhoto(it) })
+                }
             }
-            if (uiState.photosHasMore) item { OutlinedButton(onClick = { viewModel.refreshPhotos(reset = false) }, enabled = !uiState.photosLoading, modifier = Modifier.fillMaxWidth()) { Text(if (uiState.photosLoading) "正在加载…" else "继续加载") } }
+            if (uiState.photosHasMore) item(span = { GridItemSpan(maxLineSpan) }) { OutlinedButton(onClick = { viewModel.refreshPhotos(reset = false) }, enabled = !uiState.photosLoading, modifier = Modifier.fillMaxWidth()) { Text(if (uiState.photosLoading) "正在加载…" else "继续加载") } }
         }
         if (uiState.photoChangesAdditions > 0 || uiState.photoChangesRemovals > 0) {
             Surface(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(), color = MaterialTheme.colorScheme.primaryContainer, tonalElevation = 4.dp) {
@@ -2351,37 +2373,97 @@ private fun PhotosTab(uiState: UiState, viewModel: MainViewModel, modifier: Modi
             }
         }
     }
+    previewPhoto?.let { photo ->
+        PhotoViewer(photo = photo, onDismiss = { previewPhoto = null })
+    }
 }
 
 @Composable
-private fun PhotoRow(item: PhotoDisplay, viewModel: MainViewModel) {
-    Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth().clickable { viewModel.togglePhoto(item) }) {
-        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            PhotoThumbnail(item.photo.uri)
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(item.photo.capturedAt.atZone(ZoneId.of("Asia/Shanghai")).format(DateTimeFormatter.ofPattern("MM-dd HH:mm")), style = MaterialTheme.typography.bodyMedium)
-                Text("${item.photo.width} × ${item.photo.height} · ${item.photo.timeSource}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (item.centralDeleted) Text("中央副本已删除；再次勾选并确认可重新上传", style = MaterialTheme.typography.labelSmall, color = Warning)
+private fun PhotoGridItem(item: PhotoDisplay, onOpen: () -> Unit, onToggle: () -> Unit) {
+    val syncedColor = Warning
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = if (item.confirmedSynced) syncedColor.copy(alpha = 0.12f) else Color.Transparent,
+        border = if (item.confirmedSynced) BorderStroke(2.dp, syncedColor) else null
+    ) {
+        Column {
+            Box {
+                PhotoThumbnail(
+                    uri = item.photo.uri,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1f).clickable(onClick = onOpen)
+                )
+                if (item.centralDeleted) {
+                    Surface(
+                        modifier = Modifier.align(Alignment.BottomStart).padding(4.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.errorContainer
+                    ) {
+                        Icon(
+                            Icons.Filled.Warning,
+                            contentDescription = "中央副本已删除",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(3.dp).size(14.dp)
+                        )
+                    }
+                }
             }
-            Checkbox(checked = item.desiredSynced, onCheckedChange = { viewModel.togglePhoto(item) })
+            Row(
+                modifier = Modifier.fillMaxWidth().height(34.dp).padding(start = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "${item.photo.capturedAt.atZone(ZoneId.of("Asia/Shanghai")).format(DateTimeFormatter.ofPattern("HH:mm"))} | ${item.photo.sourceLabel}",
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Box(
+                    modifier = Modifier.size(34.dp).toggleable(
+                        value = item.desiredSynced,
+                        role = Role.Checkbox,
+                        onValueChange = { onToggle() }
+                    ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (item.desiredSynced) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
+                        contentDescription = if (item.desiredSynced) "取消同步" else "选择同步",
+                        tint = if (item.desiredSynced) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun PhotoThumbnail(uri: Uri) {
+private fun PhotoThumbnail(uri: Uri, modifier: Modifier = Modifier) {
+    PhotoBitmap(uri = uri, maxSize = 256, contentScale = ContentScale.Crop, modifier = modifier)
+}
+
+@Composable
+private fun PhotoBitmap(
+    uri: Uri,
+    maxSize: Int,
+    contentScale: ContentScale,
+    modifier: Modifier = Modifier,
+    backgroundColor: Color = MaterialTheme.colorScheme.surface,
+    squareCorners: Boolean = false
+) {
     val context = LocalContext.current
-    val bitmap by produceState<Bitmap?>(initialValue = null, uri) {
+    val bitmap by produceState<Bitmap?>(initialValue = null, uri, maxSize) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    context.contentResolver.loadThumbnail(uri, Size(128, 128), null)
+                    context.contentResolver.loadThumbnail(uri, Size(maxSize, maxSize), null)
                 } else {
                     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
                     var sample = 1
-                    while (bounds.outWidth / sample > 128 || bounds.outHeight / sample > 128) sample *= 2
+                    while (bounds.outWidth / sample > maxSize || bounds.outHeight / sample > maxSize) sample *= 2
                     context.contentResolver.openInputStream(uri)?.use {
                         BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
                     }
@@ -2390,17 +2472,75 @@ private fun PhotoThumbnail(uri: Uri) {
         }
     }
     Surface(
-        modifier = Modifier.size(56.dp),
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(6.dp)
+        modifier = modifier,
+        color = backgroundColor,
+        shape = if (squareCorners) RectangleShape else RoundedCornerShape(6.dp)
     ) {
         if (bitmap != null) {
             Image(
                 bitmap = bitmap!!.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
+                contentDescription = "查看照片",
+                contentScale = contentScale,
                 modifier = Modifier.fillMaxSize()
             )
+        }
+    }
+}
+
+@Composable
+private fun PhotoViewer(photo: com.liferadio.sync.data.local.AccessiblePhoto, onDismiss: () -> Unit) {
+    var scale by remember(photo.uri) { mutableFloatStateOf(1f) }
+    var offsetX by remember(photo.uri) { mutableFloatStateOf(0f) }
+    var offsetY by remember(photo.uri) { mutableFloatStateOf(0f) }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        BackHandler(onBack = onDismiss)
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            PhotoBitmap(
+                uri = photo.uri,
+                maxSize = 2048,
+                contentScale = ContentScale.Fit,
+                backgroundColor = Color.Black,
+                squareCorners = true,
+                modifier = Modifier.fillMaxSize().pointerInput(photo.uri) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        val nextScale = (scale * zoom).coerceIn(1f, 5f)
+                        scale = nextScale
+                        if (nextScale == 1f) {
+                            offsetX = 0f
+                            offsetY = 0f
+                        } else {
+                            offsetX += pan.x
+                            offsetY += pan.y
+                        }
+                    }
+                }.graphicsLayer(
+                    scaleX = scale,
+                    scaleY = scale,
+                    translationX = offsetX,
+                    translationY = offsetY
+                )
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.62f)).statusBarsPadding().padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "${photo.capturedAt.atZone(ZoneId.of("Asia/Shanghai")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))} | ${photo.sourceLabel}",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text("${photo.width} × ${photo.height}", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "关闭照片", tint = Color.White)
+                }
+            }
         }
     }
 }

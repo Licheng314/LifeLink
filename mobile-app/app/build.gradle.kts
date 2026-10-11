@@ -15,8 +15,8 @@ android {
         applicationId = "com.liferadio.sync"
         minSdk = 26
         targetSdk = 34
-        versionCode = 48
-        versionName = "0.1.0-beta.9"
+        versionCode = 51
+        versionName = "0.1.0-beta.12"
         buildConfigField(
             "String",
             "CENTRAL_BASE_URL",

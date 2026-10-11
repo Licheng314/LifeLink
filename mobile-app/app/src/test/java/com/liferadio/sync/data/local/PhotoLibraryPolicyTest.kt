@@ -49,6 +49,14 @@ class PhotoLibraryPolicyTest {
         assertEquals(listOf(7, 3), page)
     }
 
+    @Test fun `photo source label prefers visible app and falls back to media hints`() {
+        assertEquals("微信", compactPhotoSourceLabel("微信", "Screenshots", null, "shot.png"))
+        assertEquals("截图", compactPhotoSourceLabel(null, "Screenshots", "Pictures/Screenshots", "shot.png"))
+        assertEquals("相机", compactPhotoSourceLabel(null, "Camera", "DCIM/Camera", "IMG_1.jpg"))
+        assertEquals("下载", compactPhotoSourceLabel(null, null, "Download", "image.jpg"))
+        assertEquals("照片", compactPhotoSourceLabel(null, null, null, "image.jpg"))
+    }
+
     private fun selection(id: String, desired: Boolean, confirmed: Boolean) = PhotoSyncSelectionEntity(
         photoId = id, mediaStoreId = id.hashCode().toLong(), desiredSynced = desired, confirmedSynced = confirmed, businessDate = "2026-09-18"
     )
