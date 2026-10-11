@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 import webbrowser
 from ctypes import wintypes
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,9 @@ import pc_windows_startup
 from runtime_paths import is_frozen, resource_dir
 
 from device_identity import default_client_data_dir
+from pomodoro import MAX_GOAL_LENGTH, PomodoroTimer, load_timer, save_timer
+from timer_visuals import TimerButton, TimerCard, TimerVisual, LayeredTimerWindow, render_compact, EXPAND_CENTER
+from types import SimpleNamespace
 
 if sys.platform == "win32":
     import winsound
@@ -39,6 +43,7 @@ TRAY_ICON_FILE = BASE_DIR / "assets" / "life-link-client-tray.ico"
 LIFE_LINK_LOGO_FILE = BASE_DIR / "assets" / "life-link-logo-108.png"
 CLIENT_DATA_DIR = default_client_data_dir() / "data"
 SETTINGS_FILE = CLIENT_DATA_DIR / "desktop_app_settings.json"
+POMODORO_FILE = CLIENT_DATA_DIR / "pomodoro.json"
 LOG_DIR = CLIENT_DATA_DIR / "logs"
 DESKTOP_LOG_FILE = LOG_DIR / "desktop_app.log"
 SERVER_LOG_FILE = LOG_DIR / "sync_server.log"
@@ -86,7 +91,8 @@ TIMELINE_FETCH_FAILED = object()
 TIMELINE_UNCHANGED = object()
 SEDENTARY_POLL_MILLISECONDS = 1_000
 MINIMUM_WIDTH = 320
-MINIMUM_HEIGHT = 420
+MINIMUM_HEIGHT = 512
+TAB_CONTENT_GAP = 4
 
 
 def business_day_timeline_url(start: datetime) -> str:
@@ -246,6 +252,25 @@ def windows_idle_seconds() -> float:
     return elapsed_milliseconds / 1_000.0
 
 
+def windows_session_locked() -> bool:
+    """Query the input desktop without collecting window titles or processes."""
+    if sys.platform != "win32":
+        return False
+    user32 = ctypes.windll.user32
+    user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    user32.OpenInputDesktop.restype = wintypes.HANDLE
+    user32.SwitchDesktop.argtypes = [wintypes.HANDLE]
+    user32.SwitchDesktop.restype = wintypes.BOOL
+    user32.CloseDesktop.argtypes = [wintypes.HANDLE]
+    desktop = user32.OpenInputDesktop(0, False, 0x0100)
+    if not desktop:
+        return True
+    try:
+        return not bool(user32.SwitchDesktop(desktop))
+    finally:
+        user32.CloseDesktop(desktop)
+
+
 class WindowsInputActivityDetector:
     """Classify local input with an AW-compatible grace period."""
 
@@ -307,14 +332,16 @@ def format_compact_duration(seconds: object) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
-def format_clock_duration(seconds: object) -> str:
-    """Return a stable H:MM:SS countdown for the active time-interval card."""
+def format_clock_duration(seconds: object, *, omit_zero_hours: bool = False) -> str:
+    """Keep H:MM:SS for the card; optionally use MM:SS for a sub-hour bubble."""
     try:
         total = max(0, int(seconds or 0))
     except (TypeError, ValueError):
         total = 0
     hours, remainder = divmod(total, 3_600)
     minutes, seconds = divmod(remainder, 60)
+    if omit_zero_hours and hours == 0:
+        return f"{minutes:02d}:{seconds:02d}"
     return f"{hours}:{minutes:02d}:{seconds:02d}"
 
 
@@ -373,10 +400,12 @@ class UsageStatusWindow:
         root: tk.Tk,
         notify_break: Callable[[str, str], None] | None = None,
         open_dashboard: Callable[[], None] | None = None,
+        notify_timer: Callable[[str, str], None] | None = None,
     ) -> None:
         self.root = root
         self.notify_break = notify_break or (lambda _title, _message: None)
         self.open_dashboard = open_dashboard or (lambda: None)
+        self.notify_timer = notify_timer or (lambda _title, _message: None)
         self.window = tk.Toplevel(root)
         self.window.withdraw()
         self.window.title("Life Link · 用时状态")
@@ -385,7 +414,26 @@ class UsageStatusWindow:
         self.window.resizable(False, False)
         self.window.attributes("-alpha", WINDOW_ALPHA)
         self.settings = load_desktop_settings()
-        self.sedentary_paused = bool(self.settings.get("sedentary_paused", False))
+        self.pomodoro = load_timer(POMODORO_FILE)
+        self.pomodoro_setup = False
+        self.timer_mode = str(self.settings.get("timer_mode") or ("pomodoro" if self.pomodoro.phase != "idle" else "sedentary"))
+        if self.timer_mode not in {"pomodoro", "sedentary", "none"}:
+            self.timer_mode = "sedentary"
+        self.pomodoro_setup = self.timer_mode == "pomodoro" and self.pomodoro.phase == "idle"
+        self.compact_window = None
+        self.compact_frame = None
+        self.compact_anchor = None
+        self.expanded_anchor_offset = None
+        self.timer_layout_key = None
+        self.timer_redraw_job = None
+        self.compact_redraw_job = None
+        self.pomodoro_last_save = 0.0
+        self.pomodoro_last_submit = 0.0
+        self.pomodoro_submitting = False
+        self.pomodoro_event_results: queue.Queue[str] = queue.Queue()
+        self.goal_tooltip = None
+        self.goal_tooltip_job = None
+        self.sedentary_paused = self.timer_mode != "sedentary"
         self.topmost_value = tk.BooleanVar(value=bool(self.settings.get("topmost", False)))
         self.result_queue: queue.Queue[dict[str, object]] = queue.Queue()
         self.fetch_in_progress = False
@@ -454,6 +502,7 @@ class UsageStatusWindow:
         self.backdrop.bind("<ButtonRelease-1>", self._stop_drag, add="+")
 
         shell = tk.Frame(self.window, background=self.background)
+        self.shell = shell
         shell.pack(fill="both", expand=True)
         self.titlebar = tk.Frame(shell, background=self.background, height=30)
         self.titlebar.pack(fill="x")
@@ -464,13 +513,13 @@ class UsageStatusWindow:
             font=("Microsoft YaHei UI", 9, "bold"), padx=10,
         ).pack(side="left", fill="y")
         close_button = self._title_button(self.titlebar, "×", self.hide)
-        close_button.pack(side="right", fill="y")
+        close_button.pack(side="right")
         minimize_button = self._title_button(self.titlebar, "—", self.minimize)
-        minimize_button.pack(side="right", fill="y")
+        minimize_button.pack(side="right")
         self.collapse_button = self._title_button(
-            self.titlebar, "▲", self.toggle_collapsed,
+            self.titlebar, "▼", self.toggle_collapsed,
         )
-        self.collapse_button.pack(side="right", fill="y")
+        self.collapse_button.pack(side="right", before=close_button)
         # 顶部“置顶”勾选框：位于标题与折叠三角之间
         self.title_topmost_check = tk.Checkbutton(
             self.titlebar, text="置顶", variable=self.topmost_value,
@@ -515,10 +564,10 @@ class UsageStatusWindow:
         self.dashboard_button.bind("<Button-1>", lambda _event: self.open_dashboard())
         self.dashboard_button.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
 
-        app_card = tk.Frame(
+        app_card = TimerCard(
             self.totals_row, background=self.card_background,
-            highlightbackground=self.card_border, highlightthickness=1,
-            height=usage_card_height, padx=7, pady=0,
+            border=self.card_border,
+            height=usage_card_height, padx=8, pady=1,
         )
         app_card.grid_propagate(False)
         app_card.rowconfigure(0, weight=1, uniform="usage-card-space")
@@ -536,10 +585,10 @@ class UsageStatusWindow:
         today_value.grid(row=2, column=0, sticky="ew")
         self.value_labels["today_app"] = today_value
 
-        current_card = tk.Frame(
+        current_card = TimerCard(
             self.totals_row, background=self.card_background,
-            highlightbackground=self.card_border, highlightthickness=1,
-            height=usage_card_height, padx=7, pady=0,
+            border=self.card_border,
+            height=usage_card_height, padx=8, pady=1,
         )
         current_card.grid_propagate(False)
         current_card.rowconfigure(0, weight=1, uniform="usage-card-space")
@@ -558,70 +607,16 @@ class UsageStatusWindow:
         current_app_value.grid(row=2, column=0, sticky="ew")
         self.value_labels["current_app"] = current_app_value
 
-        self.sedentary_card = tk.Frame(
-            self.outer, background=self.card_background,
-            highlightbackground=self.card_border, highlightthickness=1,
-            padx=9, pady=7,
+        self.sedentary_card = TimerCard(
+            self.outer, background=self.card_background, border=self.card_border,
+            padx=10, pady=8,
         )
         self.sedentary_card.pack(fill="x", pady=(SEDENTARY_CARD_TOP_GAP, 0))
-        timer_row = tk.Frame(self.sedentary_card, background=self.card_background)
-        timer_row.pack(fill="x")
-        tk.Label(
-            timer_row, text="久坐提醒", anchor="w", background=self.card_background,
-            foreground=self.sedentary_orange, font=("Microsoft YaHei UI", 9, "bold"),
-        ).pack(side="left")
-        self.sedentary_time_label = tk.Label(
-            timer_row, text="本轮在线 00:00", anchor="w",
-            background=self.card_background, foreground=self.normal_color,
-            font=("Microsoft YaHei UI", 9, "bold"),
-        )
-        self.sedentary_time_label.pack(side="left", padx=(7, 0))
-        self.active_leave_button = tk.Button(
-            timer_row, text="主动离开", command=self.active_leave,
-            background=self.card_border, foreground=self.normal_color,
-            activebackground="#475569", activeforeground=self.normal_color,
-            relief="flat", borderwidth=0, padx=2, pady=0,
-            font=("Microsoft YaHei UI", 9),
-        )
-        self.active_leave_button.pack(side="right")
-        self.sedentary_pause_button = tk.Button(
-            timer_row, text="启用" if self.sedentary_paused else "停用",
-            command=self.toggle_sedentary_pause,
-            background=self.card_border, foreground=self.normal_color,
-            activebackground="#475569", activeforeground=self.normal_color,
-            relief="flat", borderwidth=0, padx=2, pady=0,
-            font=("Microsoft YaHei UI", 9),
-        )
-        self.sedentary_pause_button.pack(side="left", padx=(12, 0))
-        self.ack_slot = tk.Frame(
-            timer_row, background=self.card_background, width=40, height=20,
-        )
-        self.ack_slot.pack(side="right")
-        self.ack_slot.pack_propagate(False)
-        self.ack_button = tk.Button(
-            self.ack_slot, text="收到", command=self.acknowledge_reminder,
-            background=self.sedentary_orange, foreground="#111827",
-            activebackground="#fbbf24", activeforeground="#111827",
-            relief="flat", borderwidth=0, font=("Microsoft YaHei UI", 8, "bold"),
-        )
-
-        self.progress_row = tk.Frame(
-            self.sedentary_card, background=self.card_background,
-        )
-        self.progress_row.pack(fill="x", pady=(7, 0))
-        self.progress_row.columnconfigure(0, weight=1)
-        self.online_canvas = tk.Canvas(
-            self.progress_row, width=1, height=6, background=self.card_border,
-            highlightthickness=0, borderwidth=0,
-        )
-        self.online_canvas.grid(row=0, column=0, sticky="ew")
-        self.online_canvas.bind("<Configure>", lambda _event: self.redraw_progress())
 
         # ---- 个人时光倒计时 ----
-        self.personal_time_card = tk.Frame(
-            self.outer, background=self.card_background,
-            highlightbackground=self.card_border, highlightthickness=1,
-            padx=9, pady=7,
+        self.personal_time_card = TimerCard(
+            self.outer, background=self.card_background, border=self.card_border,
+            padx=10, pady=8,
         )
         personal_row = tk.Frame(self.personal_time_card, background=self.card_background)
         personal_row.pack(fill="x")
@@ -645,10 +640,10 @@ class UsageStatusWindow:
         self.personal_timeline_canvas.bind("<Configure>", lambda _event: self.redraw_personal_time())
 
         # ---- 事件列表面板（Canvas 滚动，每个事件独立带边框卡片）----
-        self.events_card = tk.Frame(
+        self.events_card = TimerCard(
             self.outer, background=self.card_background,
-            highlightbackground=self.card_border, highlightthickness=1,
-            padx=6, pady=6,
+            border=self.card_border,
+            padx=7, pady=7,
         )
         self.events_card.pack(fill="both", expand=True, pady=(5, 0))
         self.events_canvas = tk.Canvas(
@@ -687,39 +682,390 @@ class UsageStatusWindow:
             font=("Microsoft YaHei UI", 8),
         ).pack(fill="x")
 
-        self.controls = tk.Frame(self.outer, background=self.background)
-        self.controls.pack(fill="x", pady=(4, 0))
-        topmost_check = tk.Checkbutton(
-            self.controls, text="置于最上层", variable=self.topmost_value,
-            command=self.apply_topmost, background=self.background,
-            foreground=self.muted_color, activebackground=self.background,
-            activeforeground=self.normal_color, selectcolor=self.card_background,
-            font=("Microsoft YaHei UI", 8), borderwidth=0,
-        )
-        topmost_check.pack(side="left")
-
         self.functional_widgets = {
-            close_button, minimize_button, self.collapse_button, topmost_check,
+            close_button, minimize_button, self.collapse_button,
             self.title_topmost_check,
-            self.active_leave_button, self.sedentary_pause_button,
-            self.ack_slot, self.ack_button, self.dashboard_button,
+            self.dashboard_button,
             self.events_canvas, self.events_inner,
         }
+        self._build_pomodoro_controls()
         self._bind_draggable_tree(shell)
+        self._sync_timer_layout()
         self.poll_job = self.root.after(100, self.poll_results)
         self.refresh_job = self.root.after(0, self.refresh_now)
         self.sedentary_job = self.root.after(0, self.update_sedentary_timer)
         self.personal_time_job = self.root.after(0, self.update_personal_time)
         self.timeline_refresh_job = self.root.after(0, self.refresh_timeline)
 
+    def _build_pomodoro_controls(self) -> None:
+        self.goal_font = tkfont.Font(root=self.window, family="Microsoft YaHei UI", size=8)
+        self.pomodoro_goal_text = tk.StringVar(value=self.pomodoro.goal)
+        self.timer_tabs = tk.Frame(self.outer, background=self.background, height=24, padx=10)
+        self.timer_tabs.pack(fill="x", pady=(SEDENTARY_CARD_TOP_GAP, 0), before=self.sedentary_card)
+        self.timer_tabs.pack_propagate(False)
+        self.sedentary_tab = tk.Label(self.timer_tabs, text="久坐提醒", cursor="hand2",
+                                     background=self.background, font=("Microsoft YaHei UI", 9, "bold"))
+        self.sedentary_tab.pack(side="left", padx=(0, 10))
+        separator = tk.Frame(self.timer_tabs, width=1, height=14, background=self.card_border)
+        separator.pack(side="left", padx=(0, 10))
+        self.pomodoro_tab = tk.Label(self.timer_tabs, text="番茄钟", cursor="hand2",
+                                    background=self.background, font=("Microsoft YaHei UI", 9, "bold"))
+        self.pomodoro_tab.pack(side="left")
+        none_separator = tk.Frame(self.timer_tabs, width=1, height=14, background=self.card_border)
+        none_separator.pack(side="left", padx=10)
+        self.none_tab = tk.Label(self.timer_tabs, text="无", cursor="hand2",
+                                 background=self.background, foreground=self.muted_color,
+                                 font=("Microsoft YaHei UI", 9, "bold"))
+        self.none_tab.pack(side="left")
+        self.sedentary_tab.bind("<Button-1>", lambda _e: self.select_timer_mode("sedentary"))
+        self.pomodoro_tab.bind("<Button-1>", lambda _e: self.select_timer_mode("pomodoro"))
+        self.none_tab.bind("<Button-1>", lambda _e: self.select_timer_mode("none"))
+        self.timer_content = tk.Frame(self.sedentary_card, background=self.card_background)
+        self.timer_row = tk.Frame(self.timer_content, background=self.card_background, height=46)
+        self.timer_row.pack(fill="x", pady=(2, 4))
+        self.timer_row.pack_propagate(False)
+        self.timer_row.grid_propagate(False)
+        self.timer_row.rowconfigure(0, weight=1)
+        self.timer_row.columnconfigure(0, minsize=100)
+        self.timer_row.columnconfigure(1, weight=1, minsize=58)
+        self.timer_row.columnconfigure(2, minsize=84)
+        self.timer_time = tk.Label(self.timer_row, text="00:00", anchor="w",
+                                   background=self.card_background, foreground=self.normal_color,
+                                   font=("Segoe UI", -30, "bold"), padx=0, pady=0)
+        self.timer_time.grid(row=0, column=0, sticky="w")
+        self.timer_status = tk.Label(self.timer_row, anchor="w", background=self.card_background,
+                                     font=("Microsoft YaHei UI", -11), padx=0, pady=0)
+        self.timer_status.grid(row=0, column=1, sticky="w")
+        self.timer_actions = tk.Frame(self.timer_row, width=84, height=24, background=self.card_background)
+        self.timer_actions.grid(row=0, column=2, sticky="e")
+        self.timer_actions.pack_propagate(False)
+        self.active_leave_button = TimerButton(self.timer_actions, "主动离开", self.active_leave)
+        self.pomodoro_start_button = TimerButton(self.timer_actions, "开始", self.start_pomodoro, primary=True)
+        self.pomodoro_pause_button = TimerButton(self.timer_actions, "Ⅱ", self.toggle_pomodoro_pause, width=40)
+        self.pomodoro_stop_button = TimerButton(self.timer_actions, "■", self.stop_pomodoro, width=40)
+        self.pomodoro_next_button = TimerButton(self.timer_actions, "下一轮", self.open_pomodoro_setup, width=52, primary=True)
+        self.pomodoro_end_button = TimerButton(self.timer_actions, "■", self.stop_pomodoro, width=28)
+        self.timer_buttons = [self.active_leave_button, self.pomodoro_start_button, self.pomodoro_pause_button,
+                              self.pomodoro_stop_button, self.pomodoro_next_button, self.pomodoro_end_button]
+        self.online_canvas = tk.Canvas(
+            self.timer_content, width=1, height=6, background=self.card_border,
+            highlightthickness=0, borderwidth=0,
+        )
+        self.online_canvas.pack(fill="x")
+        self.online_canvas.bind("<Configure>", lambda _e: self._render_timer())
+        self.goal_row = tk.Frame(self.timer_content, height=24, background=self.card_background)
+        self.goal_row.grid_propagate(False)
+        self.goal_row.columnconfigure(0, minsize=64)
+        self.goal_row.columnconfigure(1, weight=1)
+        tk.Label(self.goal_row, text="工作目标：", background=self.card_background,
+                 foreground=self.muted_color, font=("Microsoft YaHei UI", 8)).grid(row=0, column=0, sticky="w")
+        self.goal_entry = tk.Entry(
+            self.goal_row, textvariable=self.pomodoro_goal_text, font=("Microsoft YaHei UI", 8),
+            background=self.background, foreground=self.normal_color, insertbackground=self.normal_color,
+            relief="flat", highlightthickness=1, highlightbackground=self.card_border,
+            validate="key", validatecommand=(self.window.register(lambda value: len(value) <= MAX_GOAL_LENGTH), "%P"),
+        )
+        self.goal_entry.bind("<Return>", lambda _e: self.start_pomodoro())
+        self.pomodoro_goal_label = tk.Label(
+            self.goal_row, anchor="w", font=self.goal_font, background=self.background,
+            foreground=self.normal_color, highlightthickness=1, highlightbackground=self.card_border, padx=5, pady=3,
+        )
+        self.pomodoro_goal_label.bind("<Configure>", lambda _e: self._render_timer())
+        self.pomodoro_goal_label.bind("<Enter>", self._schedule_goal_tooltip)
+        self.pomodoro_goal_label.bind("<Leave>", self._hide_goal_tooltip)
+        self.functional_widgets.update({self.sedentary_tab, self.pomodoro_tab, self.none_tab, self.goal_entry, *self.timer_buttons})
+
+    def _timer_view(self) -> str:
+        if self.timer_mode == "none":
+            return "none"
+        if self.timer_mode == "sedentary":
+            return "sedentary"
+        return "setup" if self.pomodoro_setup or self.pomodoro.phase == "idle" else self.pomodoro.phase
+
+    def select_timer_mode(self, mode: str) -> None:
+        if mode == self.timer_mode:
+            return
+        if mode not in {"sedentary", "pomodoro", "none"}:
+            return
+        if mode != "pomodoro":
+            self.pomodoro.pause("mode")
+            self.pomodoro_setup = False
+        else:
+            if not self.pomodoro.active:
+                self.pomodoro.stop()
+            self.pomodoro_setup = not self.pomodoro.active
+            self.pomodoro_goal_text.set(self.pomodoro.goal)
+        self.timer_mode = mode
+        self.sedentary_paused = mode != "sedentary"
+        self.settings["timer_mode"] = mode
+        save_desktop_settings(self.settings)
+        self.last_timer_tick = time.monotonic()
+        self._save_pomodoro()
+        self._sync_timer_layout()
+
+    def _sync_timer_layout(self) -> None:
+        view = self._timer_view()
+        key = (self.collapsed, view, bool(self.time_intervals))
+        if key == self.timer_layout_key:
+            return
+        self.timer_layout_key = key
+        for button in self.timer_buttons:
+            button.pack_forget()
+        self.sedentary_card.pack_forget()
+        if view != "none":
+            self.sedentary_card.pack(fill="x", pady=(TAB_CONTENT_GAP, 0), after=self.timer_tabs)
+        if view == "none":
+            self.timer_content.pack_forget()
+            self.goal_row.pack_forget()
+        elif view == "sedentary":
+            self.timer_content.pack(fill="x")
+            self.goal_row.pack_forget()
+            self.active_leave_button.pack(side="right")
+        else:
+            self.timer_content.pack(fill="x")
+            self.goal_row.pack(fill="x", pady=(7, 0))
+            self.goal_entry.grid_forget()
+            self.pomodoro_goal_label.grid_forget()
+            if view == "setup":
+                self.pomodoro_start_button.pack(side="right")
+                self.goal_entry.grid(row=0, column=1, sticky="ew", ipady=3)
+            else:
+                self.pomodoro_goal_label.grid(row=0, column=1, sticky="ew")
+                if view == "complete":
+                    self.pomodoro_end_button.pack(side="right")
+                    self.pomodoro_next_button.pack(side="left")
+                else:
+                    self.pomodoro_stop_button.pack(side="right")
+                    self.pomodoro_pause_button.pack(side="left")
+        self.sedentary_tab.configure(foreground=self.sedentary_orange if view == "sedentary" else self.muted_color)
+        self.pomodoro_tab.configure(foreground=self.warning_color if self.timer_mode == "pomodoro" else self.muted_color)
+        self.none_tab.configure(foreground=self.normal_color if view == "none" else self.muted_color)
+        self.personal_time_card.pack_forget()
+        self.personal_time_card.pack(fill="x", pady=(TAB_CONTENT_GAP if view == "none" else 5, 0),
+                                     after=self.timer_tabs if view == "none" else self.sedentary_card)
+        self._render_personal_time()
+        self._render_timer()
+
+    def _save_pomodoro(self) -> None:
+        try:
+            save_timer(POMODORO_FILE, self.pomodoro)
+            self.pomodoro_last_save = time.monotonic()
+        except OSError:
+            logging.exception("番茄钟进度保存失败")
+
+    def open_pomodoro_setup(self) -> None:
+        if self.pomodoro.active:
+            return
+        self.select_timer_mode("pomodoro")
+        self.pomodoro.stop()
+        self.pomodoro_setup = True
+        self.pomodoro_goal_text.set(self.pomodoro.goal)
+        if self.collapsed:
+            self.toggle_collapsed()
+        self._sync_timer_layout()
+        self.goal_entry.focus_set()
+        self.goal_entry.icursor("end")
+
+    def cancel_pomodoro_setup(self) -> None:
+        self.pomodoro_setup = False
+        self._sync_timer_layout()
+
+    def start_pomodoro(self) -> None:
+        if self.pomodoro.active:
+            return
+        goal = self.pomodoro_goal_text.get()
+        self.select_timer_mode("pomodoro")
+        self.pomodoro.start(goal)
+        self.pomodoro_setup = False
+        self.last_timer_tick = time.monotonic()
+        self._save_pomodoro()
+        self._sync_timer_layout()
+
+    def toggle_pomodoro_pause(self) -> None:
+        if self.pomodoro.paused:
+            if windows_session_locked():
+                return
+            self.pomodoro.resume()
+        else:
+            self.pomodoro.pause()
+        self.last_timer_tick = time.monotonic()
+        self._save_pomodoro()
+        self.render_pomodoro()
+
+    def pause_pomodoro_for_system(self) -> None:
+        if self.pomodoro.pause("system"):
+            self.last_timer_tick = time.monotonic()
+            self._save_pomodoro()
+            self.render_pomodoro()
+
+    def stop_pomodoro(self) -> None:
+        self.pomodoro.stop()
+        self.pomodoro_setup = self.timer_mode == "pomodoro"
+        self.last_timer_tick = time.monotonic()
+        self._save_pomodoro()
+        self._sync_timer_layout()
+        self.render_sedentary_timer()
+
+    def _ellipsize_goal(self, width: int, prefix: str = "") -> str:
+        value = prefix + (self.pomodoro.goal or "未设置工作目标")
+        if self.goal_font.measure(value) <= width:
+            return value
+        while value and self.goal_font.measure(value + "…") > max(1, width):
+            value = value[:-1]
+        return value + "…"
+
+    def render_pomodoro(self) -> None:
+        if self.timer_mode == "pomodoro":
+            self._render_timer()
+
+    def _render_timer(self) -> None:
+        view = self._timer_view()
+        if view == "none":
+            self.sedentary_card.configure(highlightbackground=self.card_border)
+            if self.collapsed:
+                self._draw_compact_timer()
+            return
+        if view == "sedentary":
+            timer = self.sedentary_timer
+            afk = self.current_activity_state == "afk"
+            clock = format_compact_duration(timer.afk_seconds if afk else timer.active_seconds)
+            label = "AFK 时间" if afk else "本轮在线"
+            color = self.afk_green if afk else self.sedentary_orange
+            progress = timer.afk_progress if afk else timer.online_progress
+        else:
+            timer = self.pomodoro
+            clock = "25:00" if view == "setup" else "00:00" if view == "complete" else format_compact_duration(timer.display_seconds)
+            label = "待开始" if view == "setup" else "已完成" if view == "complete" else "已暂停" if timer.paused else "休息" if view == "rest" else "专注"
+            color = self.afk_green if view == "rest" else self.warning_color
+            progress = 1.0 if view == "setup" else timer.progress
+            self.pomodoro_pause_button.set("▶" if timer.paused else "Ⅱ")
+            self.pomodoro_goal_label.configure(text=self._ellipsize_goal(max(1, self.pomodoro_goal_label.winfo_width() - 12)))
+        self.timer_time.configure(text=clock, foreground=self.normal_color)
+        self.timer_status.configure(text=label, foreground=color)
+        self.online_progress_ratio, self.online_progress_color = progress, color
+        self.sedentary_card.configure(highlightbackground=self.sedentary_orange
+                                     if view == "sedentary" and self.sedentary_timer.reminder_active else self.card_border)
+        self.redraw_progress()
+        if self.collapsed:
+            self._draw_compact_timer()
+
+    def _draw_compact_timer(self) -> None:
+        if not self.collapsed:
+            return
+        if self.timer_mode == "none":
+            current, remaining = self._current_time_interval()
+            intervals = []
+            for item in self.time_intervals:
+                for start, end in business_day_interval_segments(item.get("start_local_time"), item.get("end_local_time"), self.day_start_hour):
+                    intervals.append((start / 1440, end / 1440, str(item.get("color") or self.personal_time_purple)))
+            now = datetime.now(SHANGHAI_TZ)
+            now_fraction = (now.hour * 60 + now.minute + now.second / 60 - self.day_start_hour * 60) % 1440 / 1440
+            visual = TimerVisual("interval", str(current.get("name", "时间区间")) if current else "时间区间总览",
+                                 format_clock_duration(remaining, omit_zero_hours=True) if current else now.strftime("%H:%M"),
+                                 remaining / max(1, self._interval_duration_seconds(current)) if current else 0,
+                                 color=str(current.get("color") or self.personal_time_purple) if current else self.normal_color,
+                                 intervals=tuple(intervals), now_fraction=now_fraction)
+        elif self.timer_mode == "sedentary":
+            timer = self.sedentary_timer
+            visual = TimerVisual("sedentary", "本轮在线", format_compact_duration(timer.active_seconds), timer.online_progress)
+        else:
+            timer = self.pomodoro
+            complete = timer.phase == "complete"
+            ready = self._timer_view() == "setup"
+            label = "待开始" if ready else "已完成" if complete else "休息" if timer.phase == "rest" else "专注"
+            if timer.paused:
+                label += " · 暂停"
+            visual = TimerVisual("pomodoro", label, "00:00" if complete else "25:00" if self._timer_view() == "setup"
+                                 else format_compact_duration(timer.display_seconds),
+                                 1.0 if self._timer_view() == "setup" else timer.progress,
+                                 timer.goal or "未设置工作目标", timer.paused, complete, ready)
+        if visual != getattr(self, "compact_visual", None):
+            self.compact_visual = visual
+            self.compact_frame = render_compact(visual)
+            if self.compact_window and self.compact_window.visible:
+                self.compact_window.update(self.compact_frame)
+
+    def _dispatch_compact_action(self, action: str) -> None:
+        self._hide_goal_tooltip()
+        actions = {"expand": self.toggle_collapsed, "pause": self.toggle_pomodoro_pause,
+                   "stop": self.stop_pomodoro, "leave": self.active_leave, "next": self.open_pomodoro_setup}
+        if not self.pomodoro.active:
+            actions["pause"] = self.open_pomodoro_setup
+        if action in actions:
+            actions[action]()
+
+    def _compact_hover(self, action, x, y) -> None:
+        self._hide_goal_tooltip()
+        labels = {"expand": "展开", "pause": "准备开始" if not self.pomodoro.active else "继续" if self.pomodoro.paused else "暂停",
+                  "stop": "停止", "leave": "主动离开", "next": "开始下一轮", "goal": self.pomodoro.goal}
+        if action in labels:
+            self._schedule_goal_tooltip(SimpleNamespace(x_root=x, y_root=y), labels[action])
+
+    def _schedule_goal_tooltip(self, event: tk.Event, text: str | None = None) -> None:
+        value = text or self.pomodoro.goal
+        if not value or self.goal_tooltip or self.goal_tooltip_job:
+            return
+        x, y = event.x_root + 8, event.y_root + 20
+
+        def show():
+            self.goal_tooltip_job = None
+            self.goal_tooltip = tk.Toplevel(self.window)
+            self.goal_tooltip.overrideredirect(True)
+            self.goal_tooltip.attributes("-topmost", True)
+            self.goal_tooltip.geometry(f"+{min(x, self.window.winfo_screenwidth() - 300)}+{min(y, self.window.winfo_screenheight() - 100)}")
+            tk.Label(self.goal_tooltip, text=value, wraplength=280, justify="left",
+                     background=self.card_border, foreground=self.normal_color, padx=8, pady=5,
+                     font=("Microsoft YaHei UI", 9)).pack()
+
+        self.goal_tooltip_job = self.root.after(550, show)
+
+    def _hide_goal_tooltip(self, _event=None) -> None:
+        if self.goal_tooltip_job:
+            self.root.after_cancel(self.goal_tooltip_job)
+            self.goal_tooltip_job = None
+        if self.goal_tooltip:
+            self.goal_tooltip.destroy()
+            self.goal_tooltip = None
+
+    def _flush_pomodoro_events(self) -> None:
+        while not self.pomodoro_event_results.empty():
+            event_id = self.pomodoro_event_results.get_nowait()
+            self.pomodoro.pending_events = [event for event in self.pomodoro.pending_events if event["event_id"] != event_id]
+            self._save_pomodoro()
+        if self.pomodoro_submitting or not self.pomodoro.pending_events or time.monotonic() - self.pomodoro_last_submit < 15:
+            return
+        self.pomodoro_last_submit = time.monotonic()
+        self.pomodoro_submitting = True
+        pending = list(self.pomodoro.pending_events)
+
+        def submit():
+            try:
+                with self.opener.open(HEALTH_URL, timeout=3) as response:
+                    health = json.loads(response.read().decode("utf-8"))
+                if health.get("capabilities", {}).get("custom_event_idempotency") is not True:
+                    raise ValueError("本地同步服务需更新后才能安全记录番茄钟事件，请重启 PC 客户端")
+                for event in pending:
+                    request = Request(CUSTOM_EVENT_URL, data=json.dumps(event, ensure_ascii=False).encode("utf-8"),
+                                      headers={"Content-Type": "application/json"}, method="POST")
+                    with self.opener.open(request, timeout=3) as response:
+                        result = json.loads(response.read().decode("utf-8"))
+                    if result.get("status") != "stored" or result.get("event", {}).get("event_id") != event["event_id"]:
+                        raise ValueError("番茄钟事件未获持久化确认")
+                    self.pomodoro_event_results.put(event["event_id"])
+            except Exception:
+                logging.exception("番茄钟完成事件提交失败，将保留并重试")
+            finally:
+                self.pomodoro_submitting = False
+
+        threading.Thread(target=submit, daemon=True, name="life-link-pomodoro-event").start()
+
     def _title_button(
         self, parent: tk.Widget, text: str, command: Callable[[], None],
-    ) -> tk.Button:
-        return tk.Button(
-            parent, text=text, command=command, width=4,
-            background=self.background, foreground=self.muted_color,
-            activebackground=self.card_border, activeforeground=self.normal_color,
-            relief="flat", borderwidth=0, font=("Segoe UI", 10),
+    ) -> TimerButton:
+        return TimerButton(
+            parent, text=text, command=command, width=26, height=28,
+            icon={"▼": "expand", "×": "close", "—": "minimize"}[text],
+            background=self.background, header=True,
         )
 
     def _bind_draggable_tree(self, widget: tk.Widget) -> None:
@@ -750,58 +1096,35 @@ class UsageStatusWindow:
         self.drag_origin = None
 
     def toggle_collapsed(self) -> None:
-        x = self.window.winfo_x()
-        y = self.window.winfo_y()
+        self._hide_goal_tooltip()
+        self._stop_collapsed_hover_monitor()
+        self._hide_background_layer()
         if not self.collapsed:
-            self.expanded_size = (
-                self.window.winfo_width(),
-                self.window.winfo_height(),
-            )
-            self.totals_row.pack_forget()
-            self.personal_time_card.pack_forget()
-            self.events_card.pack_forget()
-            self.controls.pack_forget()
-            # In compact mode, the container owns equal top/bottom breathing room.
-            self.outer.configure(pady=SEDENTARY_CARD_TOP_GAP)
-            self.sedentary_card.pack_configure(pady=0)
+            self.window.update_idletasks()
+            self.expanded_size = (self.window.winfo_width(), self.window.winfo_height())
+            anchor = (self.collapse_button.winfo_rootx() + self.collapse_button.winfo_width() // 2,
+                      self.collapse_button.winfo_rooty() + self.collapse_button.winfo_height() // 2)
+            self.expanded_anchor_offset = (anchor[0] - self.window.winfo_rootx(), anchor[1] - self.window.winfo_rooty())
+            if self.compact_window is None:
+                self.compact_window = LayeredTimerWindow(self.root, self._dispatch_compact_action, self._compact_hover)
+            self.compact_anchor = anchor
             self.collapsed = True
-            self.collapse_button.configure(text="▼")
-            if self.collapsed_size is None:
-                # The compact state hugs the remaining card but never grows beyond the expanded width.
-                width = min(
-                    self.expanded_size[0],
-                    max(280, self.sedentary_card.winfo_reqwidth() + 20),
-                )
-                sedentary_height = max(
-                    self.sedentary_card.winfo_reqheight(),
-                    self.sedentary_card.winfo_height(),
-                )
-                height = (
-                    self.titlebar.winfo_reqheight()
-                    + sedentary_height
-                    + SEDENTARY_CARD_TOP_GAP * 2
-                )
-                self.collapsed_size = (width, height)
-            width, height = self.collapsed_size
-            self.window.geometry(f"{width}x{height}+{x}+{y}")
-            self._start_collapsed_hover_monitor()
+            self._sync_timer_layout()
+            self._draw_compact_timer()
+            self.window.withdraw()
+            self.compact_window.show(self.compact_frame, anchor, bool(self.topmost_value.get()))
         else:
-            self._stop_collapsed_hover_monitor()
-            self._hide_background_layer()
-            self.outer.configure(pady=8)
-            self.sedentary_card.pack_configure(pady=(SEDENTARY_CARD_TOP_GAP, 0))
-            self.totals_row.pack(fill="x", before=self.sedentary_card)
-            current = self.time_interval_state.get("current") if isinstance(self.time_interval_state, dict) else None
-            if self.time_intervals:
-                self.personal_time_card.pack(fill="x", pady=(5, 0))
-            self.events_card.pack(fill="x", pady=(5, 0))
-            self.controls.pack(fill="x", pady=(4, 0))
+            anchor = self.compact_window.anchor()
+            self.compact_window.hide()
             self.collapsed = False
-            self.collapse_button.configure(text="▲")
-            if self.expanded_size:
-                width, height = self.expanded_size
-                self.window.geometry(f"{width}x{height}+{x}+{y}")
-        self.root.after_idle(self.redraw_progress)
+            self._sync_timer_layout()
+            width, height = self.expanded_size
+            dx, dy = self.expanded_anchor_offset
+            self.window.geometry(f"{width}x{height}{anchor[0] - dx:+d}{anchor[1] - dy:+d}")
+            self.window.deiconify()
+            self.window.lift()
+            self.root.after_idle(self._reapply_topmost)
+        self.collapse_button.set("▼")
 
     def _pointer_is_over_window(self) -> bool:
         pointer_x, pointer_y = self.window.winfo_pointerxy()
@@ -825,6 +1148,12 @@ class UsageStatusWindow:
     def _update_collapsed_hover_alpha(self) -> None:
         self.collapsed_hover_job = None
         if not self.collapsed or not self.window.winfo_viewable():
+            return
+        if self._timer_view() != "idle":
+            # The timer orb has no rectangular substrate. Never fade its text/ring.
+            self.collapsed_hover_job = self.root.after(
+                COLLAPSED_HOVER_POLL_MILLISECONDS, self._update_collapsed_hover_alpha,
+            )
             return
         if self._pointer_is_over_window():
             self._fade_backdrop_to(WINDOW_ALPHA)
@@ -914,15 +1243,8 @@ class UsageStatusWindow:
         self.render_sedentary_timer()
 
     def toggle_sedentary_pause(self) -> None:
-        self.sedentary_paused = not self.sedentary_paused
-        self.settings["sedentary_paused"] = self.sedentary_paused
-        save_desktop_settings(self.settings)
-        if self.sedentary_paused:
-            self.sedentary_timer.acknowledge()
-        self.sedentary_pause_button.configure(
-            text="启用" if self.sedentary_paused else "停用"
-        )
-        self.render_sedentary_timer()
+        # Compatibility entry point: modes now replace the old enable/disable control.
+        self.select_timer_mode("pomodoro" if self.timer_mode == "sedentary" else "sedentary")
 
     # ---- 事件列表面板 ----
 
@@ -938,6 +1260,7 @@ class UsageStatusWindow:
         "system.activity_duration_milestone": "🚶",
         "system.late_online_check": "🌙",
         "sedentary.reminder_triggered": "🪑",
+        "pomodoro.completed": "◷",
         "report.morning": "📅",
         "report.evening": "📅",
         "report.periodic": "📅",
@@ -1165,12 +1488,11 @@ class UsageStatusWindow:
         time_fg = self.event_new_fg if is_new else self.muted_color
         border_w = 2 if is_high else 1
 
-        card = tk.Frame(
+        card = TimerCard(
             self.events_inner,
             background=bg,
-            highlightbackground=border_color,
-            highlightthickness=border_w,
-            padx=8, pady=5,
+            border=border_color, border_width=border_w,
+            padx=8 + border_w, pady=5 + border_w,
         )
         card.pack(fill="x", padx=2, pady=3)
 
@@ -1261,13 +1583,17 @@ class UsageStatusWindow:
         screen_width = self.window.winfo_screenwidth()
         screen_height = self.window.winfo_screenheight()
         width = max(MINIMUM_WIDTH, int(round(screen_width * 0.15)))
-        height = max(MINIMUM_HEIGHT, int(round(screen_height * 0.22)))
+        height = MINIMUM_HEIGHT
         x = max(0, screen_width - width - 24)
         y = max(0, screen_height - height - 72)
         self.window.geometry(f"{width}x{height}+{x}+{y}")
         self.initial_position_applied = True
 
     def show(self) -> None:
+        if self.collapsed and self.compact_window:
+            self._draw_compact_timer()
+            self.compact_window.show(self.compact_frame, self.compact_window.anchor(), bool(self.topmost_value.get()))
+            return
         self.apply_initial_geometry()
         if self.minimized:
             self.window.withdraw()
@@ -1282,6 +1608,10 @@ class UsageStatusWindow:
         self.root.after_idle(self._reapply_topmost)
 
     def hide(self) -> None:
+        if self.compact_window:
+            self.compact_window.hide()
+        self._hide_goal_tooltip()
+        self._save_pomodoro()
         self.minimized = False
         self._stop_collapsed_hover_monitor()
         self._hide_background_layer()
@@ -1351,6 +1681,8 @@ class UsageStatusWindow:
         self._reapply_topmost()
 
     def _reapply_topmost(self) -> None:
+        if self.compact_window and self.compact_window.visible:
+            self.compact_window.show(self.compact_frame, self.compact_window.anchor(), bool(self.topmost_value.get()))
         if self.window.winfo_exists():
             topmost = bool(self.topmost_value.get())
             self.backdrop.attributes("-topmost", topmost)
@@ -1407,7 +1739,7 @@ class UsageStatusWindow:
 
     def update_sedentary_timer(self) -> None:
         now = time.monotonic()
-        elapsed = 0.0 if self.last_timer_tick is None else min(6.0, now - self.last_timer_tick)
+        elapsed = 0.0 if self.last_timer_tick is None else max(0.0, now - self.last_timer_tick)
         self.last_timer_tick = now
         try:
             state, observed_afk_seconds = self.input_activity_detector.sample()
@@ -1416,12 +1748,25 @@ class UsageStatusWindow:
             state, observed_afk_seconds = "unknown", 0.0
         self.current_activity_state = state
         notify = False
-        if not self.sedentary_paused:
+        if self.timer_mode == "pomodoro" and self.pomodoro.active:
+            transitions = self.pomodoro.advance(elapsed, blocked=windows_session_locked())
+            if transitions:
+                self._save_pomodoro()
+                self._sync_timer_layout()
+                if "rest" in transitions:
+                    self.notify_timer("番茄钟完成", "现在休息 5 分钟。")
+                if "complete" in transitions:
+                    self.notify_timer("这一轮完成了", "可以开始下一轮，或结束番茄钟。")
+        elif self.timer_mode == "sedentary":
             notify = self.sedentary_timer.advance(
                 state,
-                elapsed,
+                min(6.0, elapsed),
                 observed_afk_seconds,
             )
+        if self.pomodoro.active and now - self.pomodoro_last_save >= 5:
+            self._save_pomodoro()
+        self._flush_pomodoro_events()
+        self.render_pomodoro()
         self.render_sedentary_timer()
         if notify:
             self.notify_break(
@@ -1468,28 +1813,37 @@ class UsageStatusWindow:
         if self.time_interval_initialized and isinstance(current, dict) and self.last_time_interval_id != current_id:
             self.notify_break("时间区间开始", f"已进入 {current.get('name', '时间区间')}。")
             self.last_time_interval_id = current_id
-        if self.collapsed or not self.time_intervals:
-            self.personal_time_card.pack_forget()
-        else:
-            if not self.personal_time_card.winfo_ismapped():
-                self.personal_time_card.pack(fill="x", pady=(5, 0), before=self.events_card if self.events_card.winfo_ismapped() else None)
-            if isinstance(current, dict):
-                received_elapsed = max(0, int(time.monotonic() - self.time_interval_state_received_at))
-                remaining = max(0, int(state.get("current_remaining_seconds") or 0) - received_elapsed)
-                self.personal_time_remaining = remaining / max(1, self._interval_duration_seconds(current))
-                self.personal_time_color = str(current.get("color") or self.personal_time_purple)
-                self.personal_time_label.configure(
-                    text=f"{current.get('name', '时间区间')} 剩余 {format_clock_duration(remaining)}",
-                    foreground=self.personal_time_color,
-                )
-            else:
-                self.personal_time_remaining = 0
-                self.personal_time_label.configure(
-                    text="时间区间总览",
-                    foreground=self.muted_color,
-                )
-            self.redraw_personal_time()
+        self._sync_timer_layout()
+        self._render_personal_time()
+        if self.collapsed and self.timer_mode == "none":
+            self._draw_compact_timer()
         self.personal_time_job = self.root.after(1_000, self.update_personal_time)
+
+    def _current_time_interval(self):
+        state = self.time_interval_state
+        current = state.get("current") if isinstance(state, dict) else None
+        if not self.time_intervals or not isinstance(current, dict):
+            return None, 0
+        elapsed = max(0, int(time.monotonic() - self.time_interval_state_received_at))
+        return current, max(0, int(state.get("current_remaining_seconds") or 0) - elapsed)
+
+    def _render_personal_time(self) -> None:
+        current, remaining = self._current_time_interval()
+        if current:
+            self.personal_time_remaining = remaining / max(1, self._interval_duration_seconds(current))
+            self.personal_time_color = str(current.get("color") or self.personal_time_purple)
+            self.personal_time_label.configure(
+                text=f"{current.get('name', '时间区间')} 剩余 {format_clock_duration(remaining)}",
+                foreground=self.personal_time_color,
+            )
+        else:
+            self.personal_time_remaining = 0
+            self.personal_time_color = self.normal_color
+            self.personal_time_label.configure(
+                text=f"时间区间总览 {datetime.now(SHANGHAI_TZ).strftime('%H:%M:%S')}",
+                foreground=self.normal_color,
+            )
+        self.redraw_personal_time()
 
     @staticmethod
     def _interval_duration_seconds(interval: dict[str, object]) -> int:
@@ -1548,30 +1902,8 @@ class UsageStatusWindow:
         )
 
     def render_sedentary_timer(self) -> None:
-        timer = self.sedentary_timer
-        self.sedentary_time_label.configure(
-            text=sedentary_status_text(timer, self.current_activity_state),
-            foreground=(
-                self.afk_green
-                if self.current_activity_state == "afk"
-                else self.sedentary_orange
-                if timer.reminder_active
-                else self.normal_color
-            ),
-        )
-        self.online_progress_ratio = timer.afk_progress if self.current_activity_state == "afk" else timer.online_progress
-        self.online_progress_color = self.afk_green if self.current_activity_state == "afk" else self.sedentary_orange
-        self.sedentary_card.configure(
-            highlightbackground=self.sedentary_orange if timer.reminder_active else self.card_border,
-        )
-        if timer.reminder_active:
-            self.ack_button.place(relx=0, rely=0, relwidth=1, relheight=1)
-            self.sedentary_pause_button.pack_forget()
-        else:
-            self.ack_button.place_forget()
-            if not self.sedentary_pause_button.winfo_ismapped():
-                self.sedentary_pause_button.pack(side="left", padx=(12, 0), after=self.sedentary_time_label)
-        self.redraw_progress()
+        if self.timer_mode == "sedentary":
+            self._render_timer()
 
     def redraw_progress(self) -> None:
         canvas = self.online_canvas
@@ -1589,6 +1921,10 @@ class UsageStatusWindow:
         self.render_sedentary_timer()
 
     def destroy(self) -> None:
+        if self.compact_window:
+            self.compact_window.destroy()
+        self._save_pomodoro()
+        self._hide_goal_tooltip()
         self._stop_collapsed_hover_monitor()
         if self.backdrop_fade_job is not None:
             try:
@@ -1611,6 +1947,12 @@ class UsageStatusWindow:
                 self.root.after_cancel(self.sedentary_job)
             except tk.TclError:
                 pass
+        for job in (self.personal_time_job, self.timeline_refresh_job, self.timer_redraw_job, self.compact_redraw_job):
+            if job is not None:
+                try:
+                    self.root.after_cancel(job)
+                except tk.TclError:
+                    pass
         if self.window.winfo_exists():
             self.window.destroy()
         if self.backdrop.winfo_exists():
@@ -1666,6 +2008,8 @@ class WindowsTrayIcon:
     WM_NULL = 0x0000
     WM_QUERYENDSESSION = 0x0011
     WM_ENDSESSION = 0x0016
+    WM_POWERBROADCAST = 0x0218
+    WM_WTSSESSION_CHANGE = 0x02B1
     PM_REMOVE = 0x0001
     NIM_ADD = 0x00000000
     NIM_MODIFY = 0x00000001
@@ -1695,6 +2039,7 @@ class WindowsTrayIcon:
         self, root: tk.Tk, open_dashboard: Callable[[], None],
         open_status: Callable[[], None], toggle_login_startup: Callable[[], None],
         exit_application: Callable[[], None],
+        pause_timer: Callable[[], None] | None = None,
     ) -> None:
         if sys.platform != "win32":
             raise RuntimeError("通知区域图标仅支持 Windows")
@@ -1703,6 +2048,7 @@ class WindowsTrayIcon:
         self.open_status = open_status
         self.toggle_login_startup = toggle_login_startup
         self.exit_application = exit_application
+        self.pause_timer = pause_timer or (lambda: None)
         self.command_queue: queue.SimpleQueue[str] = queue.SimpleQueue()
         self.closed = False
         self.user32 = ctypes.windll.user32
@@ -1791,6 +2137,11 @@ class WindowsTrayIcon:
             self.user32.UnregisterClassW(self.class_name, self.hinstance)
             self._release_icon()
             raise ctypes.WinError()
+        wts = ctypes.windll.wtsapi32
+        wts.WTSRegisterSessionNotification.argtypes = [wintypes.HWND, wintypes.DWORD]
+        wts.WTSRegisterSessionNotification.restype = wintypes.BOOL
+        wts.WTSUnRegisterSessionNotification.argtypes = [wintypes.HWND]
+        self.session_notifications_registered = bool(wts.WTSRegisterSessionNotification(self.hwnd, 0))
         self.notify_data = NOTIFYICONDATAW()
         self.notify_data.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
         self.notify_data.hWnd = self.hwnd
@@ -1831,6 +2182,11 @@ class WindowsTrayIcon:
         # worker.  The confirmed end-session message is queued back onto the
         # Tk owner thread, where normal resource cleanup is safe.
         if message == self.WM_QUERYENDSESSION:
+            return 1
+        if (message == self.WM_POWERBROADCAST and wparam in {4, 7, 18}) or (
+            message == self.WM_WTSSESSION_CHANGE and wparam == 7
+        ):
+            self.command_queue.put("pause-timer")
             return 1
         if message == self.WM_ENDSESSION:
             if wparam:
@@ -1909,6 +2265,8 @@ class WindowsTrayIcon:
                 self.exit_application()
             elif command == "system-exit":
                 self.exit_application(system_shutdown=True)
+            elif command == "pause-timer":
+                self.pause_timer()
         if not self.closed:
             self.pump_job = self.root.after(50, self.pump_messages)
 
@@ -1948,6 +2306,8 @@ class WindowsTrayIcon:
         if getattr(self, "notify_data", None) is not None:
             self.shell32.Shell_NotifyIconW(self.NIM_DELETE, ctypes.byref(self.notify_data))
         if getattr(self, "hwnd", None):
+            if getattr(self, "session_notifications_registered", False):
+                ctypes.windll.wtsapi32.WTSUnRegisterSessionNotification(self.hwnd)
             self.user32.DestroyWindow(self.hwnd)
             self.hwnd = None
         self.user32.UnregisterClassW(self.class_name, self.hinstance)
@@ -2152,6 +2512,10 @@ class LifeRadioDesktopApp:
         if self.tray is not None:
             self.tray.notify(title, message)
 
+    def show_timer_notification(self, title: str, message: str) -> None:
+        if self.tray is not None:
+            self.tray.notify(title, message, warning=False)
+
     def stop_server(self, *, system_shutdown: bool = False) -> None:
         process = self.server_process
         if process is not None and process.poll() is None:
@@ -2256,10 +2620,12 @@ class LifeRadioDesktopApp:
             self.status_window = UsageStatusWindow(
                 self.root, notify_break=self.show_sedentary_notification,
                 open_dashboard=self.open_dashboard,
+                notify_timer=self.show_timer_notification,
             )
             self.tray = WindowsTrayIcon(
                 self.root, self.open_dashboard, self.open_status,
                 self.toggle_login_startup, self.exit_application,
+                pause_timer=self.status_window.pause_pomodoro_for_system,
             )
             self.record_custom_event(
                 "application.started",

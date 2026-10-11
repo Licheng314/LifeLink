@@ -38,7 +38,7 @@ from device_identity import (
     migrate_legacy_installation_client_state,
     migrate_presplit_client_state,
 )
-from outbox import Outbox
+from outbox import Outbox, event_content_hash
 from blacklist_cache import load as load_cached_blacklist, save as save_cached_blacklist
 from aw_web_compat import AWWebCompatReceiver
 from windows_native_collector import WindowsNativeCollector
@@ -1512,9 +1512,20 @@ def create_local_custom_event(payload: dict[str, Any]) -> tuple[dict[str, Any] |
     if not isinstance(metadata, dict):
         return None, "metadata must be an object"
 
-    occurred_at = utc_timestamp()
+    requested_id = payload.get("event_id")
+    requested_time = payload.get("occurred_at")
+    if requested_id is not None:
+        try:
+            requested_id = str(uuid.UUID(str(requested_id)))
+        except (ValueError, AttributeError):
+            return None, "event_id must be a UUID"
+        if parse_utc_datetime(requested_time) is None:
+            return None, "stable custom events require occurred_at in UTC"
+    elif requested_time is not None:
+        return None, "occurred_at requires a stable event_id"
+    occurred_at = requested_time if requested_id else utc_timestamp()
     event = {
-        "event_id": str(uuid.uuid4()),
+        "event_id": requested_id or str(uuid.uuid4()),
         "occurred_at": occurred_at,
         "event_type": "custom.event",
         "source": {
@@ -1531,21 +1542,26 @@ def create_local_custom_event(payload: dict[str, Any]) -> tuple[dict[str, Any] |
         "_received_at": occurred_at,
     }
     device = local_desktop_device_descriptor()
-    accepted, duplicates = save_events(
-        [event],
-        device=device,
-        batch_metadata={
-            "schema_version": "v1-local",
-            "batch_id": f"custom-{uuid.uuid4()}",
-            "received_at": occurred_at,
-            "source": device["display_name"],
-            "source_type": "desktop",
-            "data_type": "custom.event",
-        },
-    )
-    if not accepted or duplicates:
-        return None, "custom event could not be stored"
-    enqueue_local_central_events([event], provenance="local_custom")
+    with central_runtime_lock:
+        if requested_id:
+            previous = get_central_outbox().event_version(requested_id)
+            if previous and previous["content_hash"] != event_content_hash(event):
+                return None, "custom event ID already belongs to different content"
+        accepted, duplicates = save_events(
+            [event],
+            device=device,
+            batch_metadata={
+                "schema_version": "v1-local",
+                "batch_id": f"custom-{uuid.uuid4()}",
+                "received_at": utc_timestamp(),
+                "source": device["display_name"],
+                "source_type": "desktop",
+                "data_type": "custom.event",
+            },
+        )
+        if not accepted or (duplicates and not requested_id):
+            return None, "custom event could not be stored"
+        enqueue_local_central_events([event], provenance="local_custom")
     return event, None
 
 
@@ -3003,6 +3019,7 @@ class SyncHandler(BaseHTTPRequestHandler):
                 "status": "ok",
                 "server_time": utc_timestamp(),
                 "api_version": "v1",
+                "capabilities": {"custom_event_idempotency": True},
                 "device": {
                     "device_id": local_device["device_id"],
                     "platform": local_device["platform"],

@@ -24,6 +24,7 @@ SHANGHAI = timezone(timedelta(hours=8), name="Asia/Shanghai")
 CUSTOM_EVENT_TYPES = {
     "application.started": ("system", "low"),
     "sedentary.reminder_triggered": ("device", "normal"),
+    "pomodoro.completed": ("device", "normal"),
 }
 
 
@@ -511,7 +512,7 @@ def _project_custom_events(connection: Any) -> int:
         detail = str(payload.get("detail") or "")[:500]
         source_device_id = row["device_id"]
         device_name = device_names.get(str(source_device_id))
-        if device_name and event_key == "sedentary.reminder_triggered":
+        if device_name and event_key in {"sedentary.reminder_triggered", "pomodoro.completed"}:
             # Distinguish which device triggered the sedentary reminder.
             title = f"{title}·{device_name}"
         metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
@@ -535,6 +536,8 @@ def _project_custom_events(connection: Any) -> int:
             source_kind="device", source_device_id=source_device_id,
             evidence={
                 "event_id": row["event_id"],
+                **({key: metadata[key] for key in ("goal", "focus_seconds", "started_at", "completed_at") if key in metadata}
+                   if event_key == "pomodoro.completed" else {}),
                 **(
                     {"platform": str(metadata.get("platform") or "Windows")[:40]}
                     if event_key == "application.started"

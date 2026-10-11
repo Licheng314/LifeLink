@@ -50,6 +50,7 @@
 - `event_id` 在一个用户的中央库中全局唯一。相同 ID、相同设备、相同 revision 和相同规范化内容再次到达时返回 `duplicate`。
 - `revision` 省略时视为 0。事件默认不可变；同 revision 内容不同必须返回 `event_conflict`。
 - `location.observation`、`custom.event` 和其他瞬时事实始终不可变。
+- PC 番茄钟工作阶段计时完成使用现有 `custom.event`，`event_key=pomodoro.completed`；包含用户填写的目标及工作计时时长，中央投影为设备类普通时间线事件。计时完成不证明目标达成；休息结束不重复生成完成事件。客户端保留稳定事件 UUID 与发生时间重试，同一次完成只记录一次，不依赖每日时间区间。
 - ActivityWatch 的持续 `app.foreground` 事件以及兼容旧客户端的 `location.sample` / `location.stay` 可以使用更高 revision 更新；只允许时长和契约声明的活动 payload 单调前进。
 - 活动位置段用同一个 `event_id` 和递增 `revision` 延长 `duration_seconds`、`observed_until` / `latest_observed_at`；定稿时可从 `location.sample` 升级为 `location.stay` 并把 `is_active` 设为 `false`。定稿后的段不得重新激活或更新，段起点坐标不得借 revision 改写。
 - 更低 revision 不得覆盖更高 revision；另一设备不得更新已存在事件，即使 event ID 相同。

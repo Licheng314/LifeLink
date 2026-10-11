@@ -453,6 +453,27 @@ class EvaluatorTests(unittest.TestCase):
         rows = self.timeline(trigger["trigger_id"])
         self.assertEqual([row["occurred_at"] for row in rows], ["2026-08-09T16:30:00Z"])
 
+    def test_pomodoro_goal_is_projected_once_as_a_normal_device_event(self):
+        self.device("desktop-a")
+        goal = "完成照片同步接口"
+        event_id = self.event("desktop-a", "2026-08-09T14:25:00Z", None, {
+            "event_key": "pomodoro.completed", "title": "番茄钟完成",
+            "detail": f"工作计时 25 分钟；目标：{goal}",
+            "metadata": {"goal": goal, "focus_seconds": 1500, "started_at": "2026-08-09T14:00:00Z"},
+        }, event_type="custom.event")
+        evaluate_all_milestones(self.connection, self.store, now=self.now)
+        evaluate_all_milestones(self.connection, self.store, now=self.now)
+        rows = self.timeline()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["event_key"], "pomodoro.completed")
+        self.assertEqual(rows[0]["category"], "device")
+        self.assertEqual(rows[0]["importance"], "normal")
+        self.assertIn(goal, rows[0]["detail"])
+        evidence = json.loads(rows[0]["evidence_json"])
+        self.assertEqual(evidence["event_id"], event_id)
+        self.assertEqual(evidence["focus_seconds"], 1500)
+        self.assertEqual(evidence["goal"], goal)
+
     def test_only_whitelisted_custom_events_are_projected_idempotently(self):
         self.device("desktop-a")
         supported_id = self.event(

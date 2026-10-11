@@ -19,6 +19,10 @@
 
 服务端的运行设置、设备凭据、公开入口、数据库、日志、媒体和运行身份统一保存在 `%USERPROFILE%\LifeLink\central`。源码版和任意发行目录共享这一份中央数据，不再把可变数据放进项目或程序目录。`LIFE_LINK_DATA_ROOT` 可为高级部署整体改写数据根目录。
 
+## PC 计时完成事件
+
+PC 的 `custom.event / pomodoro.completed` 投影为设备类普通时间线事件，保留目标、工作计时时长及起止时间；按原始事件 ID 去重。它说明一次工作计时完成，不证明目标已完成，也不会单独触发 AI 唤醒。上线此投影需同时发布中央服务代码。
+
 ## 照片同步与 AI Reader 预览（v1.18.0）
 
 照片元数据、来源设备身份和删除墓碑保存在 SQLite；不可变图片字节只保存于同一中央数据目录的 `media/photos/`，绝不进入事件 payload 或 SQLite BLOB。`POST /v1/photos/{photo_id}/content` 只接受最多 20 MiB 的 JPEG、PNG、WebP、GIF 或 HEIC 二进制，并交叉验证 Content-Length、声明长度、SHA-256 和格式签名。设备只能查看、上传和删除其自身来源；删除只是中央副本墓碑，不影响手机相册。

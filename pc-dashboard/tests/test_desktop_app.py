@@ -336,15 +336,14 @@ class DesktopTopmostControlTests(unittest.TestCase):
         self.assertIn("command=self.apply_topmost", source)
         self.assertIn("self.title_topmost_check,", source)
 
-    def test_collapsing_reuses_fixed_sizes_without_forcing_a_full_layout_flush(self):
+    def test_collapsing_preserves_layout_and_button_anchor(self):
         source = Path(desktop_app.__file__).read_text(encoding="utf-8")
         toggle = source[source.index("    def toggle_collapsed"):source.index("    def active_leave", source.index("    def toggle_collapsed"))]
-        self.assertIn("self.outer.configure(pady=SEDENTARY_CARD_TOP_GAP)", toggle)
-        self.assertIn("self.outer.configure(pady=8)", toggle)
-        self.assertIn("max(280, self.sedentary_card.winfo_reqwidth() + 20)", toggle)
-        self.assertIn("self.totals_row.pack(fill=\"x\", before=self.sedentary_card)", toggle)
-        self.assertIn("self.root.after_idle(self.redraw_progress)", toggle)
-        self.assertNotIn("update_idletasks", toggle)
+        self.assertIn("self.expanded_anchor_offset", toggle)
+        self.assertIn("self.compact_window.anchor()", toggle)
+        self.assertIn("self._sync_timer_layout()", toggle)
+        self.assertNotIn("self.totals_row.pack_forget()", toggle)
+        self.assertIn("self.compact_window.show", toggle)
         self.assertNotIn("self.sedentary_card.pack_forget()", toggle)
 
     def test_status_window_has_dashboard_button_and_tray_left_click_opens_status(self):
@@ -363,7 +362,7 @@ class DesktopTopmostControlTests(unittest.TestCase):
         self.assertIn("self.personal_timeline_canvas = tk.Canvas(", source)
         self.assertIn("height=6, background=self.card_border", source)
         self.assertIn("self.time_intervals: list[dict[str, object]] = []", source)
-        self.assertIn("text=\"时间区间总览\"", source)
+        self.assertIn('text=f"时间区间总览 ', source)
         self.assertIn("canvas.create_rectangle(", source)
         self.assertIn("center_y - 1", source)
         self.assertIn("center_y + 1", source)
@@ -376,14 +375,11 @@ class DesktopTopmostControlTests(unittest.TestCase):
         self.assertIn("self.backdrop = tk.Toplevel(root)", source)
         self.assertIn("def _fade_backdrop_to", source)
         self.assertNotIn("def _fade_window_to", source)
-        self.assertIn("+ SEDENTARY_CARD_TOP_GAP * 2", source)
-        self.assertIn("self.sedentary_card.pack_configure(pady=0)", source)
-        self.assertIn("self.sedentary_card.pack_configure(pady=(SEDENTARY_CARD_TOP_GAP, 0))", source)
         self.assertIn("if widget is self.sedentary_card:", source)
         self.assertIn("self.titlebar_substrate_widgets = {", source)
         self.assertIn("self.dashboard_button.grid(row=0, column=0", source)
         self.assertNotIn("text=\"打开 Dashboard\"", source)
-        self.assertIn("self.ack_slot, self.ack_button, self.dashboard_button", source)
+        self.assertIn("self.dashboard_button,", source)
         self.assertIn(
             'if lparam == self.WM_LBUTTONUP:\n                self.command_queue.put("status")',
             source,

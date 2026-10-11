@@ -4010,7 +4010,7 @@ components:
       properties:
         event_key:
           type: string
-          description: Stable machine-readable key such as application.started or sedentary.reminder_triggered.
+          description: Stable machine-readable key such as application.started, sedentary.reminder_triggered or pomodoro.completed. Pomodoro completion records the work timer, not achievement of its user-entered goal.
         title:
           type: string
           maxLength: 120

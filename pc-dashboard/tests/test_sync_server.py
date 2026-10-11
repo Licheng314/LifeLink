@@ -915,9 +915,30 @@ class SyncServerTestCase(unittest.TestCase):
         self.assertEqual(summary["events"][0]["event_key"], "application.started")
         self.assertTrue(summary["devices"][0]["is_local"])
 
+    def test_pomodoro_completion_retry_keeps_one_event_and_rejects_changed_content(self):
+        payload = {"event_id": "61c80f42-5068-4184-a58d-a94e60f2e610", "occurred_at": "2026-10-08T01:25:00Z",
+                   "event_key": "pomodoro.completed", "title": "番茄钟完成", "detail": "工作计时 25 分钟；目标：写初稿",
+                   "metadata": {"goal": "写初稿", "focus_seconds": 1500}}
+        first_status, first = self.request("POST", "/api/custom-events", payload)
+        second_status, second = self.request("POST", "/api/custom-events", payload)
+        self.assertEqual((first_status, second_status), (201, 201))
+        self.assertEqual(first["event"]["event_id"], second["event"]["event_id"])
+        date_str = sync_server.business_date(sync_server.parse_utc_datetime(payload["occurred_at"]))
+        _, summary = self.request("GET", f"/api/custom-events?date={date_str}")
+        self.assertEqual(len(summary["events"]), 1)
+        conflict_status, _ = self.request("POST", "/api/custom-events", {**payload, "detail": "替换目标"})
+        self.assertEqual(conflict_status, 400)
+
+    def test_custom_event_stable_id_requires_valid_occurrence_time(self):
+        status, _ = self.request("POST", "/api/custom-events", {
+            "event_id": "61c80f42-5068-4184-a58d-a94e60f2e610", "event_key": "pomodoro.completed", "title": "番茄钟完成",
+        })
+        self.assertEqual(status, 400)
+
     def test_health_advertises_durable_local_device(self):
         status, health = self.request("GET", "/v1/health")
         self.assertEqual(status, 200)
+        self.assertTrue(health["capabilities"]["custom_event_idempotency"])
         self.assertEqual(health["device"]["platform"], "desktop")
         self.assertTrue(health["device"]["device_id"].startswith("desktop-"))
         self.assertEqual(
